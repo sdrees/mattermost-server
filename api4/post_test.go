@@ -1385,8 +1385,8 @@ func TestSearchPostsWithoutViewTeamPermission(t *testing.T) {
 	_ = th.CreateMessagePostWithClient(Client, channel, message)
 
 	// Verify setup
-	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 1 {
-		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Order) != 1 {
+		t.Fatalf("wrong number of posts returned %v", len(postList.Order))
 	}
 
 	th.RemovePermissionFromRole(model.PERMISSION_VIEW_TEAM.Id, "team_user")
@@ -1408,8 +1408,8 @@ func TestSearchPostsHasSystemLevelReadChannelPermission(t *testing.T) {
 	_ = th.CreateMessagePostWithClient(Client, channel, message)
 
 	// Verify setup
-	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 1 {
-		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Order) != 1 {
+		t.Fatalf("wrong number of posts returned %v", len(postList.Order))
 	}
 
 	originalUserRoles := th.BasicUser.Roles
@@ -1418,7 +1418,7 @@ func TestSearchPostsHasSystemLevelReadChannelPermission(t *testing.T) {
 	defer th.App.UpdateUserRoles(th.BasicUser.Id, originalUserRoles, true)
 
 	// Verify roles were added
-	if basicUser, _ := th.App.GetUser(th.BasicUser.Id); basicUser.Roles != "system_admin" {
+	if basicUser, _ := th.App.GetUser(th.BasicUser.Id); basicUser.Roles != model.SYSTEM_ADMIN_ROLE_ID {
 		t.Fatalf("Roles setup failure, test expects system_admin role to have been added, but was %v", th.BasicUser.Roles)
 	}
 
@@ -1434,9 +1434,9 @@ func TestSearchPostsHasSystemLevelReadChannelPermission(t *testing.T) {
 
 	defer th.App.UpdateChannelMemberRoles(channel.Id, th.BasicUser.Id, originalChannelMemberRoles)
 
-	posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
+	postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
 
-	if len(posts.Posts) != 1 {
+	if len(postList.Posts) != 1 {
 		t.Fatalf("Expected post to returned because user had system read_channel permission.")
 	}
 }
@@ -1453,18 +1453,18 @@ func TestSearchPostsHasTeamLevelReadChannelPermission(t *testing.T) {
 	_ = th.CreateMessagePostWithClient(Client, channel, message)
 
 	// Verify setup
-	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 1 {
-		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Order) != 1 {
+		t.Fatalf("wrong number of posts returned %v", len(postList.Order))
 	}
 
 	teamMember, _ := th.App.GetTeamMember(th.BasicTeam.Id, th.BasicUser.Id)
 	originalTeamMemberRoles := teamMember.Roles
 
-	th.App.UpdateTeamMemberRoles(th.BasicTeam.Id, th.BasicUser.Id, "system_admin")
+	th.App.UpdateTeamMemberRoles(th.BasicTeam.Id, th.BasicUser.Id, model.SYSTEM_ADMIN_ROLE_ID)
 	defer th.App.UpdateTeamMemberRoles(th.BasicTeam.Id, th.BasicUser.Id, originalTeamMemberRoles)
 
 	// Verify roles were added
-	if teamMember, _ := th.App.GetTeamMember(th.BasicTeam.Id, th.BasicUser.Id); teamMember.Roles != "system_admin" {
+	if teamMember, _ := th.App.GetTeamMember(th.BasicTeam.Id, th.BasicUser.Id); teamMember.Roles != model.SYSTEM_ADMIN_ROLE_ID {
 		t.Fatal("Roles setup failure, test expects system_admin role to have been added.")
 	}
 
@@ -1479,9 +1479,9 @@ func TestSearchPostsHasTeamLevelReadChannelPermission(t *testing.T) {
 		t.Fatal("Roles setup failure, test expects the roles to have been removed.")
 	}
 
-	posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
+	postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
 
-	if len(posts.Posts) != 1 {
+	if len(postList.Posts) != 1 {
 		t.Fatalf("Expected post to returned because user had team read_channel permission.")
 	}
 }
@@ -1502,8 +1502,8 @@ func TestSearchPostsNoReadChannelPermission(t *testing.T) {
 	_ = th.CreateMessagePostWithClient(Client, channel2, message2)
 
 	// Verify search setup
-	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 2 {
-		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Order) != 2 {
+		t.Fatalf("wrong number of posts returned %v", len(postList.Order))
 	}
 
 	channelMember, _ := th.App.GetChannelMember(channel.Id, th.BasicUser.Id)
@@ -1519,15 +1519,15 @@ func TestSearchPostsNoReadChannelPermission(t *testing.T) {
 	}
 
 	// Search again.
-	posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
+	postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false)
 
 	// One post is returned...
-	if len(posts.Posts) != 1 {
+	if len(postList.Posts) != 1 {
 		t.Fatalf("Did not expect posts returned for channel without channel_user role")
 	}
 
 	// ... and its the one from the channel with read_channel permission.
-	for _, post := range posts.Posts {
+	for _, post := range postList.Posts {
 		if post.Message != message2 {
 			t.Fatal("Returned the wrong post.")
 		}
@@ -1550,8 +1550,8 @@ func TestSearchPostsWithInChannelNameFilter(t *testing.T) {
 	_ = th.CreateMessagePostWithClient(Client, channel2, message2)
 
 	// Verify search setup
-	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 2 {
-		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Order) != 2 {
+		t.Fatalf("wrong number of posts returned %v", len(postList.Order))
 	}
 
 	channelMember, _ := th.App.GetChannelMember(channel.Id, th.BasicUser.Id)
@@ -1567,25 +1567,62 @@ func TestSearchPostsWithInChannelNameFilter(t *testing.T) {
 	}
 
 	// Search again.
-	posts2, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster in:"+channel2.Name, false)
+	postList2, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster in:"+channel2.Name, false)
 
 	// One post is returned...
-	if len(posts2.Posts) != 1 {
+	if len(postList2.Posts) != 1 {
 		t.Fatalf("Did not expect posts returned for channel without channel_user role")
 	}
 
 	// ... and its the one from the channel with read_channel permission.
-	for _, post := range posts2.Posts {
+	for _, post := range postList2.Posts {
 		if post.Message != message2 {
 			t.Fatal("Returned the wrong post.")
 		}
 	}
 
 	// Search again.
-	posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster in:"+channel.Name, false)
+	postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster in:"+channel.Name, false)
 
-	if len(posts.Posts) != 0 {
+	if len(postList.Posts) != 0 {
 		t.Fatalf("Expected no posts returned for the query with 'in' filter for channel %v", channel.Name)
+	}
+}
+
+func TestSearchNoTeamMembership(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+	th.LoginBasic()
+	Client := th.Client
+	channel := th.CreatePublicChannel()
+
+	// Create test message and verify
+	message := "alabaster wood furniture"
+	_ = th.CreateMessagePostWithClient(Client, channel, message)
+	if posts, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(posts.Order) != 1 {
+		t.Fatalf("wrong number of posts returned %v", len(posts.Order))
+	}
+
+	// Remove user from channel
+	th.App.LeaveChannel(channel.Id, th.BasicUser.Id)
+	defer th.App.JoinChannel(channel, th.BasicUser.Id)
+
+	// Verify user cannot see post in search results
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Posts) != 0 {
+		t.Fatal("Was expecting user not to be able to see post.")
+	}
+
+	// Give user have system_admin role at the system context
+	originalUserRoles := th.BasicUser.Roles
+	th.App.UpdateUserRoles(th.BasicUser.Id, model.SYSTEM_ADMIN_ROLE_ID, true)
+	defer th.App.UpdateUserRoles(th.BasicUser.Id, originalUserRoles, true)
+	if basicUser, _ := th.App.GetUser(th.BasicUser.Id); basicUser.Roles != model.SYSTEM_ADMIN_ROLE_ID {
+		t.Fatalf("Roles setup failure, test expects system_admin role to have been added, but was %v", th.BasicUser.Roles)
+	}
+
+	// Search again, should now see post in search results (even though not member of channel)
+	if postList, _ := Client.SearchPosts(th.BasicTeam.Id, "alabaster", false); len(postList.Posts) != 1 {
+		t.Fatalf("Expected post to returned because user had system read_channel permission.")
 	}
 }
 

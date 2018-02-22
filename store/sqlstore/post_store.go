@@ -765,13 +765,9 @@ func (s SqlPostStore) Search(teamId string, userId string, params *model.SearchP
 					SELECT
 						Id
 					FROM
-						Channels,
-						ChannelMembers
+						Channels
 					WHERE
-						Id = ChannelId
-							AND (TeamId = :TeamId OR TeamId = '')
-							AND UserId = :UserId
-							AND DeleteAt = 0
+						 	DeleteAt = 0
 							CHANNEL_FILTER)
 				SEARCH_CLAUSE
 				ORDER BY CreateAt DESC
