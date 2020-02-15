@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package api4
 
@@ -12,11 +12,11 @@ func (api *API) InitImage() {
 }
 
 func getImage(c *Context, w http.ResponseWriter, r *http.Request) {
-	// Only redirect to our image proxy if one is enabled. Arbitrary redirects are not allowed for
-	// security reasons.
-	if transform := c.App.ImageProxyAdder(); transform != nil {
-		http.Redirect(w, r, transform(r.URL.Query().Get("url")), http.StatusFound)
+	url := r.URL.Query().Get("url")
+
+	if *c.App.Config().ImageProxySettings.Enable {
+		c.App.ImageProxy().GetImage(w, r, url)
 	} else {
-		http.NotFound(w, r)
+		http.Redirect(w, r, url, http.StatusFound)
 	}
 }

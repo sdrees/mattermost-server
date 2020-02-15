@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package api4
 
@@ -12,13 +12,13 @@ func (api *API) InitDataRetention() {
 }
 
 func getPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
-
 	// No permission check required.
 
-	if policy, err := c.App.GetDataRetentionPolicy(); err != nil {
+	policy, err := c.App.GetDataRetentionPolicy()
+	if err != nil {
 		c.Err = err
 		return
-	} else {
-		w.Write([]byte(policy.ToJson()))
 	}
+
+	w.Write([]byte(policy.ToJson()))
 }

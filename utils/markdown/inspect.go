@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package markdown
 
@@ -13,7 +13,7 @@ func Inspect(markdown string, f func(interface{}) bool) {
 		}
 		switch v := block.(type) {
 		case *Paragraph:
-			for _, inline := range v.ParseInlines(referenceDefinitions) {
+			for _, inline := range MergeInlineText(v.ParseInlines(referenceDefinitions)) {
 				InspectInline(inline, func(inline Inline) bool {
 					return f(inline)
 				})

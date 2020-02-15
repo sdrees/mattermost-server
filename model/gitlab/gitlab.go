@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package oauthgitlab
 
@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattermost/mattermost-server/einterfaces"
-	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/v5/einterfaces"
+	"github.com/mattermost/mattermost-server/v5/model"
 )
 
 type GitLabProvider struct {
@@ -47,7 +47,8 @@ func userFromGitLabUser(glu *GitLabUser) *model.User {
 		user.FirstName = glu.Name
 	}
 	user.Email = glu.Email
-	userId := strconv.FormatInt(glu.Id, 10)
+	user.Email = strings.ToLower(user.Email)
+	userId := glu.getAuthData()
 	user.AuthData = &userId
 	user.AuthService = model.USER_AUTH_SERVICE_GITLAB
 
@@ -90,10 +91,6 @@ func (glu *GitLabUser) getAuthData() string {
 	return strconv.FormatInt(glu.Id, 10)
 }
 
-func (m *GitLabProvider) GetIdentifier() string {
-	return model.USER_AUTH_SERVICE_GITLAB
-}
-
 func (m *GitLabProvider) GetUserFromJson(data io.Reader) *model.User {
 	glu := gitLabUserFromJson(data)
 	if glu.IsValid() {
@@ -101,14 +98,4 @@ func (m *GitLabProvider) GetUserFromJson(data io.Reader) *model.User {
 	}
 
 	return &model.User{}
-}
-
-func (m *GitLabProvider) GetAuthDataFromJson(data io.Reader) string {
-	glu := gitLabUserFromJson(data)
-
-	if glu.IsValid() {
-		return glu.getAuthData()
-	}
-
-	return ""
 }

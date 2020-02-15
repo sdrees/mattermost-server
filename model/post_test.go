@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -9,105 +9,93 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestPostJson(t *testing.T) {
+func TestPostToJson(t *testing.T) {
 	o := Post{Id: NewId(), Message: NewId()}
-	json := o.ToJson()
-	ro := PostFromJson(strings.NewReader(json))
+	j := o.ToJson()
+	ro := PostFromJson(strings.NewReader(j))
 
-	if o.Id != ro.Id {
-		t.Fatal("Ids do not match")
-	}
+	assert.NotNil(t, ro)
+	assert.Equal(t, o, *ro)
+}
+
+func TestPostFromJsonError(t *testing.T) {
+	ro := PostFromJson(strings.NewReader(""))
+	assert.Nil(t, ro)
 }
 
 func TestPostIsValid(t *testing.T) {
 	o := Post{}
+	maxPostSize := 10000
 
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err := o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.Id = NewId()
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.CreateAt = GetMillis()
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.UpdateAt = GetMillis()
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.UserId = NewId()
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.ChannelId = NewId()
 	o.RootId = "123"
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.RootId = ""
 	o.ParentId = "123"
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.ParentId = NewId()
 	o.RootId = ""
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.ParentId = ""
-	o.Message = strings.Repeat("0", 4001)
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	o.Message = strings.Repeat("0", maxPostSize+1)
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
-	o.Message = strings.Repeat("0", 4000)
-	if err := o.IsValid(); err != nil {
-		t.Fatal(err)
-	}
+	o.Message = strings.Repeat("0", maxPostSize)
+	err = o.IsValid(maxPostSize)
+	require.Nil(t, err)
 
 	o.Message = "test"
-	if err := o.IsValid(); err != nil {
-		t.Fatal(err)
-	}
-
+	err = o.IsValid(maxPostSize)
+	require.Nil(t, err)
 	o.Type = "junk"
-	if err := o.IsValid(); err == nil {
-		t.Fatal("should be invalid")
-	}
+	err = o.IsValid(maxPostSize)
+	require.NotNil(t, err)
 
 	o.Type = POST_CUSTOM_TYPE_PREFIX + "type"
-	if err := o.IsValid(); err != nil {
-		t.Fatal(err)
-	}
+	err = o.IsValid(maxPostSize)
+	require.Nil(t, err)
 }
 
 func TestPostPreSave(t *testing.T) {
 	o := Post{Message: "test"}
 	o.PreSave()
 
-	if o.CreateAt == 0 {
-		t.Fatal("should be set")
-	}
+	require.NotEqual(t, 0, o.CreateAt)
 
 	past := GetMillis() - 1
 	o = Post{Message: "test", CreateAt: past}
 	o.PreSave()
 
-	if o.CreateAt > past {
-		t.Fatal("should not be updated")
-	}
+	require.LessOrEqual(t, o.CreateAt, past)
 
 	o.Etag()
 }
@@ -116,15 +104,12 @@ func TestPostIsSystemMessage(t *testing.T) {
 	post1 := Post{Message: "test_1"}
 	post1.PreSave()
 
-	if post1.IsSystemMessage() {
-		t.Fatalf("TestPostIsSystemMessage failed, expected post1.IsSystemMessage() to be false")
-	}
+	require.False(t, post1.IsSystemMessage())
 
 	post2 := Post{Message: "test_2", Type: POST_JOIN_LEAVE}
 	post2.PreSave()
-	if !post2.IsSystemMessage() {
-		t.Fatalf("TestPostIsSystemMessage failed, expected post2.IsSystemMessage() to be true")
-	}
+
+	require.True(t, post2.IsSystemMessage())
 }
 
 func TestPostChannelMentions(t *testing.T) {
@@ -139,9 +124,7 @@ func TestPostSanitizeProps(t *testing.T) {
 
 	post1.SanitizeProps()
 
-	if post1.Props[PROPS_ADD_CHANNEL_MEMBER] != nil {
-		t.Fatal("should be nil")
-	}
+	require.Nil(t, post1.Props[PROPS_ADD_CHANNEL_MEMBER])
 
 	post2 := &Post{
 		Message: "test",
@@ -152,9 +135,7 @@ func TestPostSanitizeProps(t *testing.T) {
 
 	post2.SanitizeProps()
 
-	if post2.Props[PROPS_ADD_CHANNEL_MEMBER] != nil {
-		t.Fatal("should be nil")
-	}
+	require.Nil(t, post2.Props[PROPS_ADD_CHANNEL_MEMBER])
 
 	post3 := &Post{
 		Message: "test",
@@ -166,12 +147,233 @@ func TestPostSanitizeProps(t *testing.T) {
 
 	post3.SanitizeProps()
 
-	if post3.Props[PROPS_ADD_CHANNEL_MEMBER] != nil {
-		t.Fatal("should be nil")
-	}
+	require.Nil(t, post3.Props[PROPS_ADD_CHANNEL_MEMBER])
 
-	if post3.Props["attachments"] == nil {
-		t.Fatal("should not be nil")
+	require.NotNil(t, post3.Props["attachments"])
+}
+
+func TestPost_AttachmentsEqual(t *testing.T) {
+	post1 := &Post{}
+	post2 := &Post{}
+	for name, tc := range map[string]struct {
+		Attachments1 []*SlackAttachment
+		Attachments2 []*SlackAttachment
+		Expected     bool
+	}{
+		"Empty": {
+			nil,
+			nil,
+			true,
+		},
+		"DifferentLength": {
+			[]*SlackAttachment{
+				{
+					Text: "Hello World",
+				},
+			},
+			nil,
+			false,
+		},
+		"EqualText": {
+			[]*SlackAttachment{
+				{
+					Text: "Hello World",
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Text: "Hello World",
+				},
+			},
+			true,
+		},
+		"DifferentText": {
+			[]*SlackAttachment{
+				{
+					Text: "Hello World",
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Text: "Hello World 2",
+				},
+			},
+			false,
+		},
+		"DifferentColor": {
+			[]*SlackAttachment{
+				{
+					Text:  "Hello World",
+					Color: "#152313",
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Text: "Hello World 2",
+				},
+			},
+			false,
+		},
+		"EqualFields": {
+			[]*SlackAttachment{
+				{
+					Fields: []*SlackAttachmentField{
+						{
+							Title: "Hello World",
+							Value: "FooBar",
+						},
+						{
+							Title: "Hello World2",
+							Value: "FooBar2",
+						},
+					},
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Fields: []*SlackAttachmentField{
+						{
+							Title: "Hello World",
+							Value: "FooBar",
+						},
+						{
+							Title: "Hello World2",
+							Value: "FooBar2",
+						},
+					},
+				},
+			},
+			true,
+		},
+		"DifferentFields": {
+			[]*SlackAttachment{
+				{
+					Fields: []*SlackAttachmentField{
+						{
+							Title: "Hello World",
+							Value: "FooBar",
+						},
+					},
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Fields: []*SlackAttachmentField{
+						{
+							Title: "Hello World",
+							Value: "FooBar",
+							Short: false,
+						},
+						{
+							Title: "Hello World2",
+							Value: "FooBar2",
+							Short: true,
+						},
+					},
+				},
+			},
+			false,
+		},
+		"EqualActions": {
+			[]*SlackAttachment{
+				{
+					Actions: []*PostAction{
+						{
+							Name: "FooBar",
+							Options: []*PostActionOptions{
+								{
+									Text:  "abcdef",
+									Value: "abcdef",
+								},
+							},
+							Integration: &PostActionIntegration{
+								URL: "http://localhost",
+								Context: map[string]interface{}{
+									"context": "foobar",
+									"test":    123,
+								},
+							},
+						},
+					},
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Actions: []*PostAction{
+						{
+							Name: "FooBar",
+							Options: []*PostActionOptions{
+								{
+									Text:  "abcdef",
+									Value: "abcdef",
+								},
+							},
+							Integration: &PostActionIntegration{
+								URL: "http://localhost",
+								Context: map[string]interface{}{
+									"context": "foobar",
+									"test":    123,
+								},
+							},
+						},
+					},
+				},
+			},
+			true,
+		},
+		"DifferentActions": {
+			[]*SlackAttachment{
+				{
+					Actions: []*PostAction{
+						{
+							Name: "FooBar",
+							Options: []*PostActionOptions{
+								{
+									Text:  "abcdef",
+									Value: "abcdef",
+								},
+							},
+							Integration: &PostActionIntegration{
+								URL: "http://localhost",
+								Context: map[string]interface{}{
+									"context": "foobar",
+									"test":    "mattermost",
+								},
+							},
+						},
+					},
+				},
+			},
+			[]*SlackAttachment{
+				{
+					Actions: []*PostAction{
+						{
+							Name: "FooBar",
+							Options: []*PostActionOptions{
+								{
+									Text:  "abcdef",
+									Value: "abcdef",
+								},
+							},
+							Integration: &PostActionIntegration{
+								URL: "http://localhost",
+								Context: map[string]interface{}{
+									"context": "foobar",
+									"test":    123,
+								},
+							},
+						},
+					},
+				},
+			},
+			false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			post1.AddProp("attachments", tc.Attachments1)
+			post2.AddProp("attachments", tc.Attachments2)
+			assert.Equal(t, tc.Expected, post1.AttachmentsEqual(post2))
+		})
 	}
 }
 

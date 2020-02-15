@@ -1,14 +1,14 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package sqlstore
 
 import (
+	sq "github.com/Masterminds/squirrel"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/gorp"
-
-	"github.com/mattermost/mattermost-server/store"
+	"github.com/mattermost/mattermost-server/v5/store"
 )
 
 /*type SqlStore struct {
@@ -51,12 +51,15 @@ type SqlStore interface {
 	MarkSystemRanUnitTests()
 	DoesTableExist(tablename string) bool
 	DoesColumnExist(tableName string, columName string) bool
+	DoesTriggerExist(triggerName string) bool
 	CreateColumnIfNotExists(tableName string, columnName string, mySqlColType string, postgresColType string, defaultValue string) bool
+	CreateColumnIfNotExistsNoDefault(tableName string, columnName string, mySqlColType string, postgresColType string) bool
 	RemoveColumnIfExists(tableName string, columnName string) bool
 	RemoveTableIfExists(tableName string) bool
 	RenameColumnIfExists(tableName string, oldColumnName string, newColumnName string, colType string) bool
 	GetMaxLengthOfColumnIfExists(tableName string, columnName string) string
 	AlterColumnTypeIfExists(tableName string, columnName string, mySqlColType string, postgresColType string) bool
+	AlterColumnDefaultIfExists(tableName string, columnName string, mySqlColDefault *string, postgresColDefault *string) bool
 	CreateUniqueIndexIfNotExists(indexName string, tableName string, columnName string) bool
 	CreateIndexIfNotExists(indexName string, tableName string, columnName string) bool
 	CreateCompositeIndexIfNotExists(indexName string, tableName string, columnNames []string) bool
@@ -64,10 +67,13 @@ type SqlStore interface {
 	RemoveIndexIfExists(indexName string, tableName string) bool
 	GetAllConns() []*gorp.DbMap
 	Close()
+	LockToMaster()
+	UnlockFromMaster()
 	Team() store.TeamStore
 	Channel() store.ChannelStore
 	Post() store.PostStore
 	User() store.UserStore
+	Bot() store.BotStore
 	Audit() store.AuditStore
 	ClusterDiscovery() store.ClusterDiscoveryStore
 	Compliance() store.ComplianceStore
@@ -87,4 +93,10 @@ type SqlStore interface {
 	Job() store.JobStore
 	Plugin() store.PluginStore
 	UserAccessToken() store.UserAccessTokenStore
+	Role() store.RoleStore
+	Scheme() store.SchemeStore
+	TermsOfService() store.TermsOfServiceStore
+	UserTermsOfService() store.UserTermsOfServiceStore
+	LinkMetadata() store.LinkMetadataStore
+	getQueryBuilder() sq.StatementBuilderType
 }

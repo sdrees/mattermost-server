@@ -1,3 +1,6 @@
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
 package model
 
 import (
@@ -10,7 +13,7 @@ import (
 func TestPluginsResponseJson(t *testing.T) {
 	manifest := &Manifest{
 		Id: "theid",
-		Backend: &ManifestBackend{
+		Server: &ManifestServer{
 			Executable: "theexecutable",
 		},
 		Webapp: &ManifestWebapp{

@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package utils
 
@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nicksnyder/go-i18n/i18n"
-	"github.com/nicksnyder/go-i18n/i18n/bundle"
-	"github.com/nicksnyder/go-i18n/i18n/language"
-	"github.com/nicksnyder/go-i18n/i18n/translation"
+	"github.com/mattermost/go-i18n/i18n"
+	"github.com/mattermost/go-i18n/i18n/bundle"
+	"github.com/mattermost/go-i18n/i18n/language"
+	"github.com/mattermost/go-i18n/i18n/translation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/v5/model"
 )
 
 var htmlTestTranslationBundle *bundle.Bundle
@@ -28,7 +28,7 @@ func init() {
 	htmlTestTranslationBundle = bundle.New()
 	fooBold, _ := translation.NewTranslation(map[string]interface{}{
 		"id":          "foo.bold",
-		"translation": "<b>{{ .Foo }}</b>",
+		"translation": "<p>[[{{ .Foo }}]]</p>",
 	})
 	htmlTestTranslationBundle.AddTranslation(&language.Language{Tag: "en"}, fooBold)
 }
@@ -103,7 +103,7 @@ func TestHTMLTemplate_RenderError(t *testing.T) {
 }
 
 func TestTranslateAsHtml(t *testing.T) {
-	assert.EqualValues(t, "<b>&lt;i&gt;foo&lt;/i&gt;</b>", TranslateAsHtml(i18n.TranslateFunc(htmlTestTranslationBundle.MustTfunc("en")), "foo.bold", map[string]interface{}{
+	assert.EqualValues(t, "<p><strong>&lt;i&gt;foo&lt;/i&gt;</strong></p>", TranslateAsHtml(i18n.TranslateFunc(htmlTestTranslationBundle.MustTfunc("en")), "foo.bold", map[string]interface{}{
 		"Foo": "<i>foo</i>",
 	}))
 }

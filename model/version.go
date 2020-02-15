@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -9,11 +9,38 @@ import (
 	"strings"
 )
 
-// This is a list of all the current viersions including any patches.
-// It should be maitained in chronological order with most current
+// This is a list of all the current versions including any patches.
+// It should be maintained in chronological order with most current
 // release at the front of the list.
 var versions = []string{
+	"5.22.0",
+	"5.21.0",
+	"5.20.0",
+	"5.19.0",
+	"5.18.0",
+	"5.17.0",
+	"5.16.0",
+	"5.15.0",
+	"5.14.0",
+	"5.13.0",
+	"5.12.0",
+	"5.11.0",
+	"5.10.0",
+	"5.9.0",
+	"5.8.0",
+	"5.7.0",
+	"5.6.0",
+	"5.5.0",
+	"5.4.0",
+	"5.3.0",
+	"5.2.0",
+	"5.1.0",
+	"5.0.0",
+	"4.10.0",
+	"4.9.0",
+	"4.8.1",
 	"4.8.0",
+	"4.7.2",
 	"4.7.1",
 	"4.7.0",
 	"4.6.0",

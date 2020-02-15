@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -11,12 +11,16 @@ import (
 )
 
 const (
-	CHANNEL_NOTIFY_DEFAULT      = "default"
-	CHANNEL_NOTIFY_ALL          = "all"
-	CHANNEL_NOTIFY_MENTION      = "mention"
-	CHANNEL_NOTIFY_NONE         = "none"
-	CHANNEL_MARK_UNREAD_ALL     = "all"
-	CHANNEL_MARK_UNREAD_MENTION = "mention"
+	CHANNEL_NOTIFY_DEFAULT              = "default"
+	CHANNEL_NOTIFY_ALL                  = "all"
+	CHANNEL_NOTIFY_MENTION              = "mention"
+	CHANNEL_NOTIFY_NONE                 = "none"
+	CHANNEL_MARK_UNREAD_ALL             = "all"
+	CHANNEL_MARK_UNREAD_MENTION         = "mention"
+	IGNORE_CHANNEL_MENTIONS_DEFAULT     = "default"
+	IGNORE_CHANNEL_MENTIONS_OFF         = "off"
+	IGNORE_CHANNEL_MENTIONS_ON          = "on"
+	IGNORE_CHANNEL_MENTIONS_NOTIFY_PROP = "ignore_channel_mentions"
 )
 
 type ChannelUnread struct {
@@ -27,18 +31,38 @@ type ChannelUnread struct {
 	NotifyProps  StringMap `json:"-"`
 }
 
-type ChannelMember struct {
-	ChannelId    string    `json:"channel_id"`
+type ChannelUnreadAt struct {
+	TeamId       string    `json:"team_id"`
 	UserId       string    `json:"user_id"`
-	Roles        string    `json:"roles"`
-	LastViewedAt int64     `json:"last_viewed_at"`
+	ChannelId    string    `json:"channel_id"`
 	MsgCount     int64     `json:"msg_count"`
 	MentionCount int64     `json:"mention_count"`
-	NotifyProps  StringMap `json:"notify_props"`
-	LastUpdateAt int64     `json:"last_update_at"`
+	LastViewedAt int64     `json:"last_viewed_at"`
+	NotifyProps  StringMap `json:"-"`
+}
+
+type ChannelMember struct {
+	ChannelId     string    `json:"channel_id"`
+	UserId        string    `json:"user_id"`
+	Roles         string    `json:"roles"`
+	LastViewedAt  int64     `json:"last_viewed_at"`
+	MsgCount      int64     `json:"msg_count"`
+	MentionCount  int64     `json:"mention_count"`
+	NotifyProps   StringMap `json:"notify_props"`
+	LastUpdateAt  int64     `json:"last_update_at"`
+	SchemeGuest   bool      `json:"scheme_guest"`
+	SchemeUser    bool      `json:"scheme_user"`
+	SchemeAdmin   bool      `json:"scheme_admin"`
+	ExplicitRoles string    `json:"explicit_roles"`
 }
 
 type ChannelMembers []ChannelMember
+
+type ChannelMemberForExport struct {
+	ChannelMember
+	ChannelName string
+	Username    string
+}
 
 func (o *ChannelMembers) ToJson() string {
 	if b, err := json.Marshal(o); err != nil {
@@ -53,6 +77,11 @@ func (o *ChannelUnread) ToJson() string {
 	return string(b)
 }
 
+func (o *ChannelUnreadAt) ToJson() string {
+	b, _ := json.Marshal(o)
+	return string(b)
+}
+
 func ChannelMembersFromJson(data io.Reader) *ChannelMembers {
 	var o *ChannelMembers
 	json.NewDecoder(data).Decode(&o)
@@ -61,6 +90,12 @@ func ChannelMembersFromJson(data io.Reader) *ChannelMembers {
 
 func ChannelUnreadFromJson(data io.Reader) *ChannelUnread {
 	var o *ChannelUnread
+	json.NewDecoder(data).Decode(&o)
+	return o
+}
+
+func ChannelUnreadAtFromJson(data io.Reader) *ChannelUnreadAt {
+	var o *ChannelUnreadAt
 	json.NewDecoder(data).Decode(&o)
 	return o
 }
@@ -108,6 +143,12 @@ func (o *ChannelMember) IsValid() *AppError {
 		}
 	}
 
+	if ignoreChannelMentions, ok := o.NotifyProps[IGNORE_CHANNEL_MENTIONS_NOTIFY_PROP]; ok {
+		if len(ignoreChannelMentions) > 40 || !IsIgnoreChannelMentionsValid(ignoreChannelMentions) {
+			return NewAppError("ChannelMember.IsValid", "model.channel_member.is_valid.ignore_channel_mentions_value.app_error", nil, "ignore_channel_mentions="+ignoreChannelMentions, http.StatusBadRequest)
+		}
+	}
+
 	return nil
 }
 
@@ -138,11 +179,16 @@ func IsSendEmailValid(sendEmail string) bool {
 	return sendEmail == CHANNEL_NOTIFY_DEFAULT || sendEmail == "true" || sendEmail == "false"
 }
 
+func IsIgnoreChannelMentionsValid(ignoreChannelMentions string) bool {
+	return ignoreChannelMentions == IGNORE_CHANNEL_MENTIONS_ON || ignoreChannelMentions == IGNORE_CHANNEL_MENTIONS_OFF || ignoreChannelMentions == IGNORE_CHANNEL_MENTIONS_DEFAULT
+}
+
 func GetDefaultChannelNotifyProps() StringMap {
 	return StringMap{
-		DESKTOP_NOTIFY_PROP:     CHANNEL_NOTIFY_DEFAULT,
-		MARK_UNREAD_NOTIFY_PROP: CHANNEL_MARK_UNREAD_ALL,
-		PUSH_NOTIFY_PROP:        CHANNEL_NOTIFY_DEFAULT,
-		EMAIL_NOTIFY_PROP:       CHANNEL_NOTIFY_DEFAULT,
+		DESKTOP_NOTIFY_PROP:                 CHANNEL_NOTIFY_DEFAULT,
+		MARK_UNREAD_NOTIFY_PROP:             CHANNEL_MARK_UNREAD_ALL,
+		PUSH_NOTIFY_PROP:                    CHANNEL_NOTIFY_DEFAULT,
+		EMAIL_NOTIFY_PROP:                   CHANNEL_NOTIFY_DEFAULT,
+		IGNORE_CHANNEL_MENTIONS_NOTIFY_PROP: IGNORE_CHANNEL_MENTIONS_DEFAULT,
 	}
 }

@@ -81,52 +81,83 @@ func (d *Decoder) Decode(dst interface{}, src map[string][]string) error {
 				errors[path] = err
 			}
 		} else if !d.ignoreUnknownKeys {
-			errors[path] = fmt.Errorf("schema: invalid path %q", path)
+			errors[path] = UnknownKeyError{Key: path}
 		}
 	}
+	errors.merge(d.checkRequired(t, src))
 	if len(errors) > 0 {
 		return errors
 	}
-	return d.checkRequired(t, src, "")
+	return nil
 }
 
 // checkRequired checks whether required fields are empty
 //
-// check type t recursively if t has struct fields, and prefix is same as parsePath: in dotted notation
+// check type t recursively if t has struct fields.
 //
 // src is the source map for decoding, we use it here to see if those required fields are included in src
-func (d *Decoder) checkRequired(t reflect.Type, src map[string][]string, prefix string) error {
+func (d *Decoder) checkRequired(t reflect.Type, src map[string][]string) MultiError {
+	m, errs := d.findRequiredFields(t, "", "")
+	for key, fields := range m {
+		if isEmptyFields(fields, src) {
+			errs[key] = EmptyFieldError{Key: key}
+		}
+	}
+	return errs
+}
+
+// findRequiredFields recursively searches the struct type t for required fields.
+//
+// canonicalPrefix and searchPrefix are used to resolve full paths in dotted notation
+// for nested struct fields. canonicalPrefix is a complete path which never omits
+// any embedded struct fields. searchPrefix is a user-friendly path which may omit
+// some embedded struct fields to point promoted fields.
+func (d *Decoder) findRequiredFields(t reflect.Type, canonicalPrefix, searchPrefix string) (map[string][]fieldWithPrefix, MultiError) {
 	struc := d.cache.get(t)
 	if struc == nil {
 		// unexpect, cache.get never return nil
-		return errors.New("cache fail")
+		return nil, MultiError{canonicalPrefix + "*": errors.New("cache fail")}
 	}
 
+	m := map[string][]fieldWithPrefix{}
+	errs := MultiError{}
 	for _, f := range struc.fields {
 		if f.typ.Kind() == reflect.Struct {
-			err := d.checkRequired(f.typ, src, prefix+f.alias+".")
-			if err != nil {
-				if !f.anon {
-					return err
+			fcprefix := canonicalPrefix + f.canonicalAlias + "."
+			for _, fspath := range f.paths(searchPrefix) {
+				fm, ferrs := d.findRequiredFields(f.typ, fcprefix, fspath+".")
+				for key, fields := range fm {
+					m[key] = append(m[key], fields...)
 				}
-				// check embedded parent field.
-				err2 := d.checkRequired(f.typ, src, prefix)
-				if err2 != nil {
-					return err
-				}
+				errs.merge(ferrs)
 			}
 		}
-		if f.required {
-			key := f.alias
-			if prefix != "" {
-				key = prefix + key
-			}
-			if isEmpty(f.typ, src[key]) {
-				return fmt.Errorf("%v is empty", key)
+		if f.isRequired {
+			key := canonicalPrefix + f.canonicalAlias
+			m[key] = append(m[key], fieldWithPrefix{
+				fieldInfo: f,
+				prefix:    searchPrefix,
+			})
+		}
+	}
+	return m, errs
+}
+
+type fieldWithPrefix struct {
+	*fieldInfo
+	prefix string
+}
+
+// isEmptyFields returns true if all of specified fields are empty.
+func isEmptyFields(fields []fieldWithPrefix, src map[string][]string) bool {
+	for _, f := range fields {
+		for _, path := range f.paths(f.prefix) {
+			if !isEmpty(f.typ, src[path]) {
+				return false
 			}
 		}
 	}
-	return nil
+	return true
 }
 
 // isEmpty returns true if value is empty for specific type
@@ -185,7 +216,7 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 	// Get the converter early in case there is one for a slice type.
 	conv := d.cache.converter(t)
 	m := isTextUnmarshaler(v)
-	if conv == nil && t.Kind() == reflect.Slice && m.IsSlice {
+	if conv == nil && t.Kind() == reflect.Slice && m.IsSliceElement {
 		var items []reflect.Value
 		elemT := t.Elem()
 		isPtrElem := elemT.Kind() == reflect.Ptr
@@ -211,7 +242,7 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 				}
 			} else if m.IsValid {
 				u := reflect.New(elemT)
-				if m.IsPtr {
+				if m.IsSliceElementPtr {
 					u = reflect.New(reflect.PtrTo(elemT).Elem())
 				}
 				if err := u.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(value)); err != nil {
@@ -222,7 +253,7 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 						Err:   err,
 					}
 				}
-				if m.IsPtr {
+				if m.IsSliceElementPtr {
 					items = append(items, u.Elem().Addr())
 				} else if u.Kind() == reflect.Ptr {
 					items = append(items, u.Elem())
@@ -283,11 +314,7 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 			val = values[len(values)-1]
 		}
 
-		if val == "" {
-			if d.zeroEmpty {
-				v.Set(reflect.Zero(t))
-			}
-		} else if conv != nil {
+		if conv != nil {
 			if value := conv(val); value.IsValid() {
 				v.Set(value.Convert(t))
 			} else {
@@ -298,15 +325,32 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 				}
 			}
 		} else if m.IsValid {
-			// If the value implements the encoding.TextUnmarshaler interface
-			// apply UnmarshalText as the converter
-			if err := m.Unmarshaler.UnmarshalText([]byte(val)); err != nil {
-				return ConversionError{
-					Key:   path,
-					Type:  t,
-					Index: -1,
-					Err:   err,
+			if m.IsPtr {
+				u := reflect.New(v.Type())
+				if err := u.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(val)); err != nil {
+					return ConversionError{
+						Key:   path,
+						Type:  t,
+						Index: -1,
+						Err:   err,
+					}
 				}
+				v.Set(reflect.Indirect(u))
+			} else {
+				// If the value implements the encoding.TextUnmarshaler interface
+				// apply UnmarshalText as the converter
+				if err := m.Unmarshaler.UnmarshalText([]byte(val)); err != nil {
+					return ConversionError{
+						Key:   path,
+						Type:  t,
+						Index: -1,
+						Err:   err,
+					}
+				}
+			}
+		} else if val == "" {
+			if d.zeroEmpty {
+				v.Set(reflect.Zero(t))
 			}
 		} else if conv := builtinConverters[t.Kind()]; conv != nil {
 			if value := conv(val); value.IsValid() {
@@ -326,16 +370,16 @@ func (d *Decoder) decode(v reflect.Value, path string, parts []pathPart, values 
 }
 
 func isTextUnmarshaler(v reflect.Value) unmarshaler {
-
 	// Create a new unmarshaller instance
 	m := unmarshaler{}
-
-	// As the UnmarshalText function should be applied
-	// to the pointer of the type, we convert the value to pointer.
-	if v.CanAddr() {
-		v = v.Addr()
-	}
 	if m.Unmarshaler, m.IsValid = v.Interface().(encoding.TextUnmarshaler); m.IsValid {
+		return m
+	}
+	// As the UnmarshalText function should be applied to the pointer of the
+	// type, we check that type to see if it implements the necessary
+	// method.
+	if m.Unmarshaler, m.IsValid = reflect.New(v.Type()).Interface().(encoding.TextUnmarshaler); m.IsValid {
+		m.IsPtr = true
 		return m
 	}
 
@@ -345,12 +389,17 @@ func isTextUnmarshaler(v reflect.Value) unmarshaler {
 		t = t.Elem()
 	}
 	if t.Kind() == reflect.Slice {
-		// if t is a pointer slice, check if it implements encoding.TextUnmarshaler
-		m.IsSlice = true
+		// Check if the slice implements encoding.TextUnmarshaller
+		if m.Unmarshaler, m.IsValid = v.Interface().(encoding.TextUnmarshaler); m.IsValid {
+			return m
+		}
+		// If t is a pointer slice, check if its elements implement
+		// encoding.TextUnmarshaler
+		m.IsSliceElement = true
 		if t = t.Elem(); t.Kind() == reflect.Ptr {
 			t = reflect.PtrTo(t.Elem())
 			v = reflect.Zero(t)
-			m.IsPtr = true
+			m.IsSliceElementPtr = true
 			m.Unmarshaler, m.IsValid = v.Interface().(encoding.TextUnmarshaler)
 			return m
 		}
@@ -365,9 +414,18 @@ func isTextUnmarshaler(v reflect.Value) unmarshaler {
 // unmarshaller contains information about a TextUnmarshaler type
 type unmarshaler struct {
 	Unmarshaler encoding.TextUnmarshaler
-	IsSlice     bool
-	IsPtr       bool
-	IsValid     bool
+	// IsValid indicates whether the resolved type indicated by the other
+	// flags implements the encoding.TextUnmarshaler interface.
+	IsValid bool
+	// IsPtr indicates that the resolved type is the pointer of the original
+	// type.
+	IsPtr bool
+	// IsSliceElement indicates that the resolved type is a slice element of
+	// the original type.
+	IsSliceElement bool
+	// IsSliceElementPtr indicates that the resolved type is a pointer to a
+	// slice element of the original type.
+	IsSliceElementPtr bool
 }
 
 // Errors ---------------------------------------------------------------------
@@ -397,6 +455,24 @@ func (e ConversionError) Error() string {
 	return output
 }
 
+// UnknownKeyError stores information about an unknown key in the source map.
+type UnknownKeyError struct {
+	Key string // key from the source map.
+}
+
+func (e UnknownKeyError) Error() string {
+	return fmt.Sprintf("schema: invalid path %q", e.Key)
+}
+
+// EmptyFieldError stores information about an empty required field.
+type EmptyFieldError struct {
+	Key string // required key in the source map.
+}
+
+func (e EmptyFieldError) Error() string {
+	return fmt.Sprintf("%v is empty", e.Key)
+}
+
 // MultiError stores multiple decoding errors.
 //
 // Borrowed from the App Engine SDK.
@@ -417,4 +493,12 @@ func (e MultiError) Error() string {
 		return s + " (and 1 other error)"
 	}
 	return fmt.Sprintf("%s (and %d other errors)", s, len(e)-1)
+}
+
+func (e MultiError) merge(errors MultiError) {
+	for key, err := range errors {
+		if e[key] == nil {
+			e[key] = err
+		}
+	}
 }

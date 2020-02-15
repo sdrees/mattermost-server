@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package einterfaces
 
@@ -20,6 +20,7 @@ type MetricsInterface interface {
 
 	IncrementClusterRequest()
 	ObserveClusterRequestDuration(elapsed float64)
+	IncrementClusterEventType(eventType string)
 
 	IncrementLogin()
 	IncrementLoginFail()
@@ -42,4 +43,14 @@ type MetricsInterface interface {
 
 	IncrementPostsSearchCounter()
 	ObservePostsSearchDuration(elapsed float64)
+	ObserveStoreMethodDuration(method, success string, elapsed float64)
+	ObserveApiEndpointDuration(endpoint, method string, elapsed float64)
+	IncrementPostIndexCounter()
+	IncrementUserIndexCounter()
+	IncrementChannelIndexCounter()
+
+	ObservePluginHookDuration(pluginID, hookName string, success bool, elapsed float64)
+	ObservePluginMultiHookIterationDuration(pluginID string, elapsed float64)
+	ObservePluginMultiHookDuration(elapsed float64)
+	ObservePluginApiDuration(pluginID, apiName string, success bool, elapsed float64)
 }

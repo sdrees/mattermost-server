@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package markdown
 
@@ -152,6 +152,12 @@ func RenderInlineHTML(inline Inline) (result string) {
 			result += ` title="` + htmlEscaper.Replace(title) + `"`
 		}
 		result += `>`
+		for _, inline := range v.Children {
+			result += RenderInlineHTML(inline)
+		}
+		result += "</a>"
+	case *Autolink:
+		result += `<a href="` + htmlEscaper.Replace(escapeURL(v.Destination())) + `">`
 		for _, inline := range v.Children {
 			result += RenderInlineHTML(inline)
 		}

@@ -1,82 +1,298 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
 import (
-	"strings"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/utils"
+	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v5/utils"
 )
 
 func TestSendNotifications(t *testing.T) {
-	th := Setup().InitBasic()
+	th := Setup(t).InitBasic()
 	defer th.TearDown()
 
 	th.App.AddUserToChannel(th.BasicUser2, th.BasicChannel)
 
-	post1, err := th.App.CreatePostMissingChannel(&model.Post{
+	post1, appErr := th.App.CreatePostMissingChannel(&model.Post{
 		UserId:    th.BasicUser.Id,
 		ChannelId: th.BasicChannel.Id,
 		Message:   "@" + th.BasicUser2.Username,
+		Type:      model.POST_ADD_TO_CHANNEL,
+		Props:     map[string]interface{}{model.POST_PROPS_ADDED_USER_ID: "junk"},
 	}, true)
-
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, appErr)
 
 	mentions, err := th.App.SendNotifications(post1, th.BasicTeam, th.BasicChannel, th.BasicUser, nil)
-	if err != nil {
-		t.Fatal(err)
-	} else if mentions == nil {
-		t.Log(mentions)
-		t.Fatal("user should have been mentioned")
-	} else if mentions[0] != th.BasicUser2.Id {
-		t.Log(mentions)
-		t.Fatal("user should have been mentioned")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, mentions)
+	require.True(t, utils.StringInSlice(th.BasicUser2.Id, mentions), "mentions", mentions)
 
-	dm, err := th.App.CreateDirectChannel(th.BasicUser.Id, th.BasicUser2.Id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dm, appErr := th.App.GetOrCreateDirectChannel(th.BasicUser.Id, th.BasicUser2.Id)
+	require.Nil(t, appErr)
 
-	post2, err := th.App.CreatePostMissingChannel(&model.Post{
+	post2, appErr := th.App.CreatePostMissingChannel(&model.Post{
 		UserId:    th.BasicUser.Id,
 		ChannelId: dm.Id,
 		Message:   "dm message",
 	}, true)
+	require.Nil(t, appErr)
 
-	if err != nil {
-		t.Fatal(err)
-	}
+	mentions, err = th.App.SendNotifications(post2, th.BasicTeam, dm, th.BasicUser, nil)
+	require.NoError(t, err)
+	require.NotNil(t, mentions)
 
-	_, err = th.App.SendNotifications(post2, th.BasicTeam, dm, th.BasicUser, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, appErr = th.App.UpdateActive(th.BasicUser2, false)
+	require.Nil(t, appErr)
+	appErr = th.App.InvalidateAllCaches()
+	require.Nil(t, appErr)
 
-	th.App.UpdateActive(th.BasicUser2, false)
-	th.App.InvalidateAllCaches()
-
-	post3, err := th.App.CreatePostMissingChannel(&model.Post{
+	post3, appErr := th.App.CreatePostMissingChannel(&model.Post{
 		UserId:    th.BasicUser.Id,
 		ChannelId: dm.Id,
 		Message:   "dm message",
 	}, true)
+	require.Nil(t, appErr)
 
-	if err != nil {
-		t.Fatal(err)
+	mentions, err = th.App.SendNotifications(post3, th.BasicTeam, dm, th.BasicUser, nil)
+	require.NoError(t, err)
+	require.NotNil(t, mentions)
+
+	th.BasicChannel.DeleteAt = 1
+	mentions, err = th.App.SendNotifications(post1, th.BasicTeam, th.BasicChannel, th.BasicUser, nil)
+	require.NoError(t, err)
+	require.Empty(t, mentions)
+}
+
+func TestSendNotificationsWithManyUsers(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	users := []*model.User{}
+	for i := 0; i < 10; i++ {
+		user := th.CreateUser()
+		th.LinkUserToTeam(user, th.BasicTeam)
+		th.App.AddUserToChannel(user, th.BasicChannel)
+		users = append(users, user)
 	}
 
-	_, err = th.App.SendNotifications(post3, th.BasicTeam, dm, th.BasicUser, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, appErr1 := th.App.CreatePostMissingChannel(&model.Post{
+		UserId:    th.BasicUser.Id,
+		ChannelId: th.BasicChannel.Id,
+		Message:   "@channel",
+		Type:      model.POST_ADD_TO_CHANNEL,
+		Props:     map[string]interface{}{model.POST_PROPS_ADDED_USER_ID: "junk"},
+	}, true)
+	require.Nil(t, appErr1)
+
+	// Each user should have a mention count of exactly 1 in the DB at this point.
+	t.Run("1-mention", func(t *testing.T) {
+		for i, user := range users {
+			t.Run(fmt.Sprintf("user-%d", i+1), func(t *testing.T) {
+				channelUnread, appErr2 := th.Server.Store.Channel().GetChannelUnread(th.BasicChannel.Id, user.Id)
+				require.Nil(t, appErr2)
+				assert.Equal(t, int64(1), channelUnread.MentionCount)
+			})
+		}
+	})
+
+	_, appErr1 = th.App.CreatePostMissingChannel(&model.Post{
+		UserId:    th.BasicUser.Id,
+		ChannelId: th.BasicChannel.Id,
+		Message:   "@channel",
+		Type:      model.POST_ADD_TO_CHANNEL,
+		Props:     map[string]interface{}{model.POST_PROPS_ADDED_USER_ID: "junk"},
+	}, true)
+	require.Nil(t, appErr1)
+
+	// Now each user should have a mention count of exactly 2 in the DB.
+	t.Run("2-mentions", func(t *testing.T) {
+		for i, user := range users {
+			t.Run(fmt.Sprintf("user-%d", i+1), func(t *testing.T) {
+				channelUnread, appErr2 := th.Server.Store.Channel().GetChannelUnread(th.BasicChannel.Id, user.Id)
+				require.Nil(t, appErr2)
+				assert.Equal(t, int64(2), channelUnread.MentionCount)
+			})
+		}
+	})
+}
+
+func TestSendOutOfChannelMentions(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	channel := th.BasicChannel
+
+	user1 := th.BasicUser
+	user2 := th.BasicUser2
+
+	t.Run("should send ephemeral post when there is an out of channel mention", func(t *testing.T) {
+		post := &model.Post{}
+		potentialMentions := []string{user2.Username}
+
+		sent, err := th.App.sendOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.True(t, sent)
+	})
+
+	t.Run("should not send ephemeral post when there are no out of channel mentions", func(t *testing.T) {
+		post := &model.Post{}
+		potentialMentions := []string{"not a user"}
+
+		sent, err := th.App.sendOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.False(t, sent)
+	})
+}
+
+func TestFilterOutOfChannelMentions(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	channel := th.BasicChannel
+
+	user1 := th.BasicUser
+	user2 := th.BasicUser2
+	user3 := th.CreateUser()
+	th.LinkUserToTeam(user3, th.BasicTeam)
+
+	t.Run("should return users not in the channel", func(t *testing.T) {
+		post := &model.Post{}
+		potentialMentions := []string{user2.Username, user3.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Len(t, outOfChannelUsers, 2)
+		assert.True(t, (outOfChannelUsers[0].Id == user2.Id || outOfChannelUsers[1].Id == user2.Id))
+		assert.True(t, (outOfChannelUsers[0].Id == user3.Id || outOfChannelUsers[1].Id == user3.Id))
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return results for a system message", func(t *testing.T) {
+		post := &model.Post{
+			Type: model.POST_ADD_REMOVE,
+		}
+		potentialMentions := []string{user2.Username, user3.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return results for a direct message", func(t *testing.T) {
+		post := &model.Post{}
+		directChannel := &model.Channel{
+			Type: model.CHANNEL_DIRECT,
+		}
+		potentialMentions := []string{user2.Username, user3.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, directChannel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return results for a group message", func(t *testing.T) {
+		post := &model.Post{}
+		groupChannel := &model.Channel{
+			Type: model.CHANNEL_GROUP,
+		}
+		potentialMentions := []string{user2.Username, user3.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, groupChannel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return inactive users", func(t *testing.T) {
+		inactiveUser := th.CreateUser()
+		inactiveUser, appErr := th.App.UpdateActive(inactiveUser, false)
+		require.Nil(t, appErr)
+
+		post := &model.Post{}
+		potentialMentions := []string{inactiveUser.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return bot users", func(t *testing.T) {
+		botUser := th.CreateUser()
+		botUser.IsBot = true
+
+		post := &model.Post{}
+		potentialMentions := []string{botUser.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should not return results for non-existant users", func(t *testing.T) {
+		post := &model.Post{}
+		potentialMentions := []string{"foo", "bar"}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, channel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Nil(t, outOfChannelUsers)
+		assert.Nil(t, outOfGroupUsers)
+	})
+
+	t.Run("should separate users not in the channel from users not in the group", func(t *testing.T) {
+		nonChannelMember := th.CreateUser()
+		th.LinkUserToTeam(nonChannelMember, th.BasicTeam)
+		nonGroupMember := th.CreateUser()
+		th.LinkUserToTeam(nonGroupMember, th.BasicTeam)
+
+		group := th.CreateGroup()
+		_, appErr := th.App.UpsertGroupMember(group.Id, th.BasicUser.Id)
+		require.Nil(t, appErr)
+		_, appErr = th.App.UpsertGroupMember(group.Id, nonChannelMember.Id)
+		require.Nil(t, appErr)
+
+		constrainedChannel := th.CreateChannel(th.BasicTeam)
+		constrainedChannel.GroupConstrained = model.NewBool(true)
+		constrainedChannel, appErr = th.App.UpdateChannel(constrainedChannel)
+		require.Nil(t, appErr)
+
+		_, appErr = th.App.UpsertGroupSyncable(&model.GroupSyncable{
+			GroupId:    group.Id,
+			Type:       model.GroupSyncableTypeChannel,
+			SyncableId: constrainedChannel.Id,
+		})
+		require.Nil(t, appErr)
+
+		post := &model.Post{}
+		potentialMentions := []string{nonChannelMember.Username, nonGroupMember.Username}
+
+		outOfChannelUsers, outOfGroupUsers, err := th.App.filterOutOfChannelMentions(user1, post, constrainedChannel, potentialMentions)
+
+		assert.Nil(t, err)
+		assert.Len(t, outOfChannelUsers, 1)
+		assert.Equal(t, nonChannelMember.Id, outOfChannelUsers[0].Id)
+		assert.Len(t, outOfGroupUsers, 1)
+		assert.Equal(t, nonGroupMember.Id, outOfGroupUsers[0].Id)
+	})
 }
 
 func TestGetExplicitMentions(t *testing.T) {
@@ -85,9 +301,10 @@ func TestGetExplicitMentions(t *testing.T) {
 	id3 := model.NewId()
 
 	for name, tc := range map[string]struct {
-		Message  string
-		Keywords map[string][]string
-		Expected *ExplicitMentions
+		Message     string
+		Attachments []*model.SlackAttachment
+		Keywords    map[string][]string
+		Expected    *ExplicitMentions
 	}{
 		"Nobody": {
 			Message:  "this is a message",
@@ -104,8 +321,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user",
 			Keywords: map[string][]string{"@user": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -113,8 +330,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user.name.",
 			Keywords: map[string][]string{"@user.name.": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -122,8 +339,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user.name.",
 			Keywords: map[string][]string{"@user.name.": {id1}, "@user.name": {id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -131,8 +348,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user.",
 			Keywords: map[string][]string{"@user": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -140,19 +357,73 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user",
 			Keywords: map[string][]string{"this": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 				OtherPotentialMentions: []string{"user"},
+			},
+		},
+		"OnePersonWithPeriodAfter": {
+			Message:  "this is a message for @user.",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"OnePersonWithPeriodBefore": {
+			Message:  "this is a message for .@user",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"OnePersonWithColonAfter": {
+			Message:  "this is a message for @user:",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"OnePersonWithColonBefore": {
+			Message:  "this is a message for :@user",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"OnePersonWithHyphenAfter": {
+			Message:  "this is a message for @user.",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"OnePersonWithHyphenBefore": {
+			Message:  "this is a message for -@user",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
 			},
 		},
 		"MultiplePeopleWithOneWord": {
 			Message:  "this is a message for @user",
 			Keywords: map[string][]string{"@user": {id1, id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
 				},
 			},
 		},
@@ -160,8 +431,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user",
 			Keywords: map[string][]string{"@user": {id1}, "@mention": {id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -169,9 +440,9 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is an @mention for @user",
 			Keywords: map[string][]string{"@user": {id1}, "@mention": {id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
 				},
 			},
 		},
@@ -179,9 +450,32 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is an message for @channel",
 			Keywords: map[string][]string{"@channel": {id1, id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
+				},
+				ChannelMentioned: true,
+			},
+		},
+
+		"ChannelWithColonAtEnd": {
+			Message:  "this is a message for @channel:",
+			Keywords: map[string][]string{"@channel": {id1, id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
+				},
+				ChannelMentioned: true,
+			},
+		},
+		"CapitalizedChannel": {
+			Message:  "this is an message for @cHaNNeL",
+			Keywords: map[string][]string{"@channel": {id1, id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
 				},
 				ChannelMentioned: true,
 			},
@@ -190,9 +484,31 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is an message for @all",
 			Keywords: map[string][]string{"@all": {id1, id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
+				},
+				AllMentioned: true,
+			},
+		},
+		"AllWithColonAtEnd": {
+			Message:  "this is a message for @all:",
+			Keywords: map[string][]string{"@all": {id1, id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
+				},
+				AllMentioned: true,
+			},
+		},
+		"CapitalizedAll": {
+			Message:  "this is an message for @ALL",
+			Keywords: map[string][]string{"@all": {id1, id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: ChannelMention,
+					id2: ChannelMention,
 				},
 				AllMentioned: true,
 			},
@@ -201,8 +517,17 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "user.period doesn't complicate things at all by including periods in their username",
 			Keywords: map[string][]string{"user.period": {id1}, "user": {id2}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"AtUserWithColonAtEnd": {
+			Message:  "this is a message for @user:",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -210,8 +535,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for @user.period.",
 			Keywords: map[string][]string{"@user.period": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -219,8 +544,17 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is a message for user.period.",
 			Keywords: map[string][]string{"user.period": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"UserWithColonAtEnd": {
+			Message:  "this is a message for user:",
+			Keywords: map[string][]string{"user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -228,10 +562,16 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "this is an message for @potential and @user",
 			Keywords: map[string][]string{"@user": {id1}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 				OtherPotentialMentions: []string{"potential"},
+			},
+		},
+		"PotentialOutOfChannelUserWithPeriod": {
+			Message: "this is an message for @potential.user",
+			Expected: &ExplicitMentions{
+				OtherPotentialMentions: []string{"potential.user"},
 			},
 		},
 		"InlineCode": {
@@ -248,10 +588,10 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "*@aaa @bbb @ccc*",
 			Keywords: map[string][]string{"@aaa": {id1}, "@bbb": {id2}, "@ccc": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
-					id3: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
+					id3: KeywordMention,
 				},
 			},
 		},
@@ -259,10 +599,10 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "**@aaa @bbb @ccc**",
 			Keywords: map[string][]string{"@aaa": {id1}, "@bbb": {id2}, "@ccc": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
-					id3: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
+					id3: KeywordMention,
 				},
 			},
 		},
@@ -270,10 +610,10 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "~~@aaa @bbb @ccc~~",
 			Keywords: map[string][]string{"@aaa": {id1}, "@bbb": {id2}, "@ccc": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
-					id2: true,
-					id3: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
+					id3: KeywordMention,
 				},
 			},
 		},
@@ -281,8 +621,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "### @aaa",
 			Keywords: map[string][]string{"@aaa": {id1}, "@bbb": {id2}, "@ccc": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -290,8 +630,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "> @aaa",
 			Keywords: map[string][]string{"@aaa": {id1}, "@bbb": {id2}, "@ccc": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -304,8 +644,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "smile",
 			Keywords: map[string][]string{"smile": {id1}, "smiley": {id2}, "smiley_cat": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -313,8 +653,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  ":smile",
 			Keywords: map[string][]string{"smile": {id1}, "smiley": {id2}, "smiley_cat": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -322,8 +662,8 @@ func TestGetExplicitMentions(t *testing.T) {
 			Message:  "smile:",
 			Keywords: map[string][]string{"smile": {id1}, "smiley": {id2}, "smiley_cat": {id3}},
 			Expected: &ExplicitMentions{
-				MentionedUserIds: map[string]bool{
-					id1: true,
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
 				},
 			},
 		},
@@ -344,12 +684,132 @@ func TestGetExplicitMentions(t *testing.T) {
 				ChannelMentioned: true,
 			},
 		},
+		"MultibyteCharacter": {
+			Message:  "My name is 萌",
+			Keywords: map[string][]string{"萌": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterAtBeginningOfSentence": {
+			Message:  "이메일을 보내다.",
+			Keywords: map[string][]string{"이메일": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterInPartOfSentence": {
+			Message:  "我爱吃番茄炒饭",
+			Keywords: map[string][]string{"番茄": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterAtEndOfSentence": {
+			Message:  "こんにちは、世界",
+			Keywords: map[string][]string{"世界": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterTwiceInSentence": {
+			Message:  "石橋さんが石橋を渡る",
+			Keywords: map[string][]string{"石橋": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+
+		// The following tests cover cases where the message mentions @user.name, so we shouldn't assume that
+		// the user might be intending to mention some @user that isn't in the channel.
+		"Don't include potential mention that's part of an actual mention (without trailing period)": {
+			Message:  "this is an message for @user.name",
+			Keywords: map[string][]string{"@user.name": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Don't include potential mention that's part of an actual mention (with trailing period)": {
+			Message:  "this is an message for @user.name.",
+			Keywords: map[string][]string{"@user.name": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Don't include potential mention that's part of an actual mention (with multiple trailing periods)": {
+			Message:  "this is an message for @user.name...",
+			Keywords: map[string][]string{"@user.name": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Don't include potential mention that's part of an actual mention (containing and followed by multiple periods)": {
+			Message:  "this is an message for @user...name...",
+			Keywords: map[string][]string{"@user...name": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"should include the mentions from attachment text and preText": {
+			Message: "this is an message for @user1",
+			Attachments: []*model.SlackAttachment{
+				{
+					Text:    "this is a message For @user2",
+					Pretext: "this is a message for @here",
+				},
+			},
+			Keywords: map[string][]string{"@user1": {id1}, "@user2": {id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+					id2: KeywordMention,
+				},
+				HereMentioned: true,
+			},
+		},
+		"Name on keywords is a prefix of a mention": {
+			Message:  "@other @test-two",
+			Keywords: map[string][]string{"@test": {model.NewId()}},
+			Expected: &ExplicitMentions{
+				OtherPotentialMentions: []string{"other", "test-two"},
+			},
+		},
+		"Name on mentions is a prefix of other mention": {
+			Message:  "@other-one @other @other-two",
+			Keywords: nil,
+			Expected: &ExplicitMentions{
+				OtherPotentialMentions: []string{"other-one", "other", "other-two"},
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := GetExplicitMentions(tc.Message, tc.Keywords)
-			if tc.Expected.MentionedUserIds == nil {
-				tc.Expected.MentionedUserIds = make(map[string]bool)
+			post := &model.Post{
+				Message: tc.Message,
+				Props: model.StringInterface{
+					"attachments": tc.Attachments,
+				},
 			}
+
+			m := getExplicitMentions(post, tc.Keywords)
+
 			assert.EqualValues(t, tc.Expected, m)
 		})
 	}
@@ -373,7 +833,7 @@ func TestGetExplicitMentionsAtHere(t *testing.T) {
 		"(@here(":   true,
 		")@here)":   true,
 		"-@here-":   true,
-		"_@here_":   false, // This case shouldn't mention since it would be mentioning "@here_"
+		"_@here_":   true,
 		"=@here=":   true,
 		"+@here+":   true,
 		"[@here[":   true,
@@ -383,6 +843,7 @@ func TestGetExplicitMentionsAtHere(t *testing.T) {
 		"\\@here\\": true,
 		"|@here|":   true,
 		";@here;":   true,
+		"@here:":    true,
 		":@here:":   false, // This case shouldn't trigger a mention since it follows the format of reactions e.g. :word:
 		"'@here'":   true,
 		"\"@here\"": true,
@@ -394,29 +855,64 @@ func TestGetExplicitMentionsAtHere(t *testing.T) {
 		"?@here?":   true,
 		"`@here`":   false, // This case shouldn't mention since it's a code block
 		"~@here~":   true,
+		"@HERE":     true,
+		"@hERe":     true,
 	}
 
 	for message, shouldMention := range cases {
-		if m := GetExplicitMentions(message, nil); m.HereMentioned && !shouldMention {
-			t.Fatalf("shouldn't have mentioned @here with \"%v\"", message)
-		} else if !m.HereMentioned && shouldMention {
-			t.Fatalf("should've mentioned @here with \"%v\"", message)
-		}
+		post := &model.Post{Message: message}
+		m := getExplicitMentions(post, nil)
+		require.False(t, m.HereMentioned && !shouldMention, "shouldn't have mentioned @here with \"%v\"")
+		require.False(t, !m.HereMentioned && shouldMention, "should've mentioned @here with \"%v\"")
 	}
 
 	// mentioning @here and someone
 	id := model.NewId()
-	if m := GetExplicitMentions("@here @user @potential", map[string][]string{"@user": {id}}); !m.HereMentioned {
-		t.Fatal("should've mentioned @here with \"@here @user\"")
-	} else if len(m.MentionedUserIds) != 1 || !m.MentionedUserIds[id] {
-		t.Fatal("should've mentioned @user with \"@here @user\"")
-	} else if len(m.OtherPotentialMentions) > 1 {
-		t.Fatal("should've potential mentions for @potential")
-	}
+	m := getExplicitMentions(&model.Post{Message: "@here @user @potential"}, map[string][]string{"@user": {id}})
+	require.True(t, m.HereMentioned, "should've mentioned @here with \"@here @user\"")
+	require.Len(t, m.Mentions, 1)
+	require.Equal(t, KeywordMention, m.Mentions[id], "should've mentioned @user with \"@here @user\"")
+	require.LessOrEqual(t, len(m.OtherPotentialMentions), 1, "should've potential mentions for @potential")
+}
+
+func TestAllowChannelMentions(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	post := &model.Post{ChannelId: th.BasicChannel.Id, UserId: th.BasicUser.Id}
+
+	t.Run("should return true for a regular post with few channel members", func(t *testing.T) {
+		allowChannelMentions := th.App.allowChannelMentions(post, 5)
+		assert.True(t, allowChannelMentions)
+	})
+
+	t.Run("should return false for a channel header post", func(t *testing.T) {
+		headerChangePost := &model.Post{ChannelId: th.BasicChannel.Id, UserId: th.BasicUser.Id, Type: model.POST_HEADER_CHANGE}
+		allowChannelMentions := th.App.allowChannelMentions(headerChangePost, 5)
+		assert.False(t, allowChannelMentions)
+	})
+
+	t.Run("should return false for a channel purpose post", func(t *testing.T) {
+		purposeChangePost := &model.Post{ChannelId: th.BasicChannel.Id, UserId: th.BasicUser.Id, Type: model.POST_PURPOSE_CHANGE}
+		allowChannelMentions := th.App.allowChannelMentions(purposeChangePost, 5)
+		assert.False(t, allowChannelMentions)
+	})
+
+	t.Run("should return false for a regular post with many channel members", func(t *testing.T) {
+		allowChannelMentions := th.App.allowChannelMentions(post, int(*th.App.Config().TeamSettings.MaxNotificationsPerChannel)+1)
+		assert.False(t, allowChannelMentions)
+	})
+
+	t.Run("should return false for a post where the post user does not have USE_CHANNEL_MENTIONS permission", func(t *testing.T) {
+		defer th.AddPermissionToRole(model.PERMISSION_USE_CHANNEL_MENTIONS.Id, model.CHANNEL_USER_ROLE_ID)
+		th.RemovePermissionFromRole(model.PERMISSION_USE_CHANNEL_MENTIONS.Id, model.CHANNEL_USER_ROLE_ID)
+		allowChannelMentions := th.App.allowChannelMentions(post, 5)
+		assert.False(t, allowChannelMentions)
+	})
 }
 
 func TestGetMentionKeywords(t *testing.T) {
-	th := Setup()
+	th := Setup(t)
 	defer th.TearDown()
 
 	// user with username or custom mentions enabled
@@ -429,17 +925,25 @@ func TestGetMentionKeywords(t *testing.T) {
 		},
 	}
 
-	profiles := map[string]*model.User{user1.Id: user1}
-	mentions := th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 3 {
-		t.Fatal("should've returned three mention keywords")
-	} else if ids, ok := mentions["user"]; !ok || ids[0] != user1.Id {
-		t.Fatal("should've returned mention key of user")
-	} else if ids, ok := mentions["@user"]; !ok || ids[0] != user1.Id {
-		t.Fatal("should've returned mention key of @user")
-	} else if ids, ok := mentions["mention"]; !ok || ids[0] != user1.Id {
-		t.Fatal("should've returned mention key of mention")
+	channelMemberNotifyPropsMap1Off := map[string]model.StringMap{
+		user1.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
 	}
+
+	profiles := map[string]*model.User{user1.Id: user1}
+	mentions := th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap1Off)
+	require.Len(t, mentions, 3, "should've returned three mention keywords")
+
+	ids, ok := mentions["user"]
+	require.True(t, ok)
+	require.Equal(t, user1.Id, ids[0], "should've returned mention key of user")
+	ids, ok = mentions["@user"]
+	require.True(t, ok)
+	require.Equal(t, user1.Id, ids[0], "should've returned mention key of @user")
+	ids, ok = mentions["mention"]
+	require.True(t, ok)
+	require.Equal(t, user1.Id, ids[0], "should've returned mention key of mention")
 
 	// user with first name mention enabled
 	user2 := &model.User{
@@ -451,13 +955,19 @@ func TestGetMentionKeywords(t *testing.T) {
 		},
 	}
 
-	profiles = map[string]*model.User{user2.Id: user2}
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 2 {
-		t.Fatal("should've returned two mention keyword")
-	} else if ids, ok := mentions["First"]; !ok || ids[0] != user2.Id {
-		t.Fatal("should've returned mention key of First")
+	channelMemberNotifyPropsMap2Off := map[string]model.StringMap{
+		user2.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
 	}
+
+	profiles = map[string]*model.User{user2.Id: user2}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap2Off)
+	require.Len(t, mentions, 2, "should've returned two mention keyword")
+
+	ids, ok = mentions["First"]
+	require.True(t, ok)
+	require.Equal(t, user2.Id, ids[0], "should've returned mention key of First")
 
 	// user with @channel/@all mentions enabled
 	user3 := &model.User{
@@ -469,15 +979,58 @@ func TestGetMentionKeywords(t *testing.T) {
 		},
 	}
 
-	profiles = map[string]*model.User{user3.Id: user3}
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 3 {
-		t.Fatal("should've returned three mention keywords")
-	} else if ids, ok := mentions["@channel"]; !ok || ids[0] != user3.Id {
-		t.Fatal("should've returned mention key of @channel")
-	} else if ids, ok := mentions["@all"]; !ok || ids[0] != user3.Id {
-		t.Fatal("should've returned mention key of @all")
+	// Channel-wide mentions are not ignored on channel level
+	channelMemberNotifyPropsMap3Off := map[string]model.StringMap{
+		user3.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
 	}
+	profiles = map[string]*model.User{user3.Id: user3}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap3Off)
+	require.Len(t, mentions, 3, "should've returned three mention keywords")
+	ids, ok = mentions["@channel"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @channel")
+	ids, ok = mentions["@all"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @all")
+
+	// Channel member notify props is set to default
+	channelMemberNotifyPropsMapDefault := map[string]model.StringMap{
+		user3.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_DEFAULT,
+		},
+	}
+	profiles = map[string]*model.User{user3.Id: user3}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMapDefault)
+	require.Len(t, mentions, 3, "should've returned three mention keywords")
+	ids, ok = mentions["@channel"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @channel")
+	ids, ok = mentions["@all"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @all")
+
+	// Channel member notify props is empty
+	channelMemberNotifyPropsMapEmpty := map[string]model.StringMap{}
+	profiles = map[string]*model.User{user3.Id: user3}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMapEmpty)
+	require.Len(t, mentions, 3, "should've returned three mention keywords")
+	ids, ok = mentions["@channel"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @channel")
+	ids, ok = mentions["@all"]
+	require.True(t, ok)
+	require.Equal(t, user3.Id, ids[0], "should've returned mention key of @all")
+
+	// Channel-wide mentions are ignored channel level
+	channelMemberNotifyPropsMap3On := map[string]model.StringMap{
+		user3.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_ON,
+		},
+	}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap3On)
+	require.NotEmpty(t, mentions, "should've not returned any keywords")
 
 	// user with all types of mentions enabled
 	user4 := &model.User{
@@ -491,24 +1044,55 @@ func TestGetMentionKeywords(t *testing.T) {
 		},
 	}
 
-	profiles = map[string]*model.User{user4.Id: user4}
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 6 {
-		t.Fatal("should've returned six mention keywords")
-	} else if ids, ok := mentions["user"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of user")
-	} else if ids, ok := mentions["@user"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of @user")
-	} else if ids, ok := mentions["mention"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of mention")
-	} else if ids, ok := mentions["First"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of First")
-	} else if ids, ok := mentions["@channel"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of @channel")
-	} else if ids, ok := mentions["@all"]; !ok || ids[0] != user4.Id {
-		t.Fatal("should've returned mention key of @all")
+	// Channel-wide mentions are not ignored on channel level
+	channelMemberNotifyPropsMap4Off := map[string]model.StringMap{
+		user4.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
 	}
 
+	profiles = map[string]*model.User{user4.Id: user4}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap4Off)
+	require.Len(t, mentions, 6, "should've returned six mention keywords")
+	ids, ok = mentions["user"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of user")
+	ids, ok = mentions["@user"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of @user")
+	ids, ok = mentions["mention"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of mention")
+	ids, ok = mentions["First"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of First")
+	ids, ok = mentions["@channel"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of @channel")
+	ids, ok = mentions["@all"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of @all")
+
+	// Channel-wide mentions are ignored on channel level
+	channelMemberNotifyPropsMap4On := map[string]model.StringMap{
+		user4.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_ON,
+		},
+	}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap4On)
+	require.Len(t, mentions, 4, "should've returned four mention keywords")
+	ids, ok = mentions["user"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of user")
+	ids, ok = mentions["@user"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of @user")
+	ids, ok = mentions["mention"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of mention")
+	ids, ok = mentions["First"]
+	require.True(t, ok)
+	require.Equal(t, user4.Id, ids[0], "should've returned mention key of First")
 	dup_count := func(list []string) map[string]int {
 
 		duplicate_frequency := make(map[string]int)
@@ -535,920 +1119,1001 @@ func TestGetMentionKeywords(t *testing.T) {
 		user3.Id: user3,
 		user4.Id: user4,
 	}
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 6 {
-		t.Fatal("should've returned six mention keywords")
-	} else if ids, ok := mentions["user"]; !ok || len(ids) != 2 || (ids[0] != user1.Id && ids[1] != user1.Id) || (ids[0] != user4.Id && ids[1] != user4.Id) {
-		t.Fatal("should've mentioned user1 and user4 with user")
-	} else if ids := dup_count(mentions["@user"]); len(ids) != 4 || (ids[user1.Id] != 2) || (ids[user4.Id] != 2) {
-		t.Fatal("should've mentioned user1 and user4 with @user")
-	} else if ids, ok := mentions["mention"]; !ok || len(ids) != 2 || (ids[0] != user1.Id && ids[1] != user1.Id) || (ids[0] != user4.Id && ids[1] != user4.Id) {
-		t.Fatal("should've mentioned user1 and user4 with mention")
-	} else if ids, ok := mentions["First"]; !ok || len(ids) != 2 || (ids[0] != user2.Id && ids[1] != user2.Id) || (ids[0] != user4.Id && ids[1] != user4.Id) {
-		t.Fatal("should've mentioned user2 and user4 with First")
-	} else if ids, ok := mentions["@channel"]; !ok || len(ids) != 2 || (ids[0] != user3.Id && ids[1] != user3.Id) || (ids[0] != user4.Id && ids[1] != user4.Id) {
-		t.Fatal("should've mentioned user3 and user4 with @channel")
-	} else if ids, ok := mentions["@all"]; !ok || len(ids) != 2 || (ids[0] != user3.Id && ids[1] != user3.Id) || (ids[0] != user4.Id && ids[1] != user4.Id) {
-		t.Fatal("should've mentioned user3 and user4 with @all")
+	// Channel-wide mentions are not ignored on channel level for all users
+	channelMemberNotifyPropsMap5Off := map[string]model.StringMap{
+		user1.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
+		user2.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
+		user3.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
+		user4.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
 	}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMap5Off)
+	require.Len(t, mentions, 6, "should've returned six mention keywords")
+	ids, ok = mentions["user"]
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.False(t, ids[0] != user1.Id && ids[1] != user1.Id, "should've mentioned user1  with user")
+	require.False(t, ids[0] != user4.Id && ids[1] != user4.Id, "should've mentioned user4  with user")
+	idsMap := dup_count(mentions["@user"])
+	require.True(t, ok)
+	require.Len(t, idsMap, 4)
+	require.Equal(t, idsMap[user1.Id], 2, "should've mentioned user1 with @user")
+	require.Equal(t, idsMap[user4.Id], 2, "should've mentioned user4 with @user")
+
+	ids, ok = mentions["mention"]
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.False(t, ids[0] != user1.Id && ids[1] != user1.Id, "should've mentioned user1 with mention")
+	require.False(t, ids[0] != user4.Id && ids[1] != user4.Id, "should've mentioned user4 with mention")
+	ids, ok = mentions["First"]
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.False(t, ids[0] != user2.Id && ids[1] != user2.Id, "should've mentioned user2 with First")
+	require.False(t, ids[0] != user4.Id && ids[1] != user4.Id, "should've mentioned user4 with First")
+	ids, ok = mentions["@channel"]
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.False(t, ids[0] != user3.Id && ids[1] != user3.Id, "should've mentioned user3 with @channel")
+	require.False(t, ids[0] != user4.Id && ids[1] != user4.Id, "should've mentioned user4 with @channel")
+	ids, ok = mentions["@all"]
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.False(t, ids[0] != user3.Id && ids[1] != user3.Id, "should've mentioned user3 with @all")
+	require.False(t, ids[0] != user4.Id && ids[1] != user4.Id, "should've mentioned user4 with @all")
 
 	// multiple users and more than MaxNotificationsPerChannel
-	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.MaxNotificationsPerChannel = 3 })
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, true)
-	if len(mentions) != 4 {
-		t.Fatal("should've returned four mention keywords")
-	} else if _, ok := mentions["@channel"]; ok {
-		t.Fatal("should not have mentioned any user with @channel")
-	} else if _, ok := mentions["@all"]; ok {
-		t.Fatal("should not have mentioned any user with @all")
-	} else if _, ok := mentions["@here"]; ok {
-		t.Fatal("should not have mentioned any user with @here")
-	}
-
+	mentions = th.App.getMentionKeywordsInChannel(profiles, false, channelMemberNotifyPropsMap4Off)
+	require.Len(t, mentions, 4, "should've returned four mention keywords")
+	_, ok = mentions["@channel"]
+	require.False(t, ok, "should not have mentioned any user with @channel")
+	_, ok = mentions["@all"]
+	require.False(t, ok, "should not have mentioned any user with @all")
+	_, ok = mentions["@here"]
+	require.False(t, ok, "should not have mentioned any user with @here")
 	// no special mentions
 	profiles = map[string]*model.User{
 		user1.Id: user1,
 	}
-	mentions = th.App.GetMentionKeywordsInChannel(profiles, false)
-	if len(mentions) != 3 {
-		t.Fatal("should've returned three mention keywords")
-	} else if ids, ok := mentions["user"]; !ok || len(ids) != 1 || ids[0] != user1.Id {
-		t.Fatal("should've mentioned user1 with user")
-	} else if ids, ok := mentions["@user"]; !ok || len(ids) != 2 || ids[0] != user1.Id || ids[1] != user1.Id {
-		t.Fatal("should've mentioned user1 twice with @user")
-	} else if ids, ok := mentions["mention"]; !ok || len(ids) != 1 || ids[0] != user1.Id {
-		t.Fatal("should've mentioned user1 with mention")
-	} else if _, ok := mentions["First"]; ok {
-		t.Fatal("should not have mentioned user1 with First")
-	} else if _, ok := mentions["@channel"]; ok {
-		t.Fatal("should not have mentioned any user with @channel")
-	} else if _, ok := mentions["@all"]; ok {
-		t.Fatal("should not have mentioned any user with @all")
-	} else if _, ok := mentions["@here"]; ok {
-		t.Fatal("should not have mentioned any user with @here")
+	mentions = th.App.getMentionKeywordsInChannel(profiles, false, channelMemberNotifyPropsMap4Off)
+	require.Len(t, mentions, 3, "should've returned three mention keywords")
+	ids, ok = mentions["user"]
+	require.True(t, ok)
+	require.Len(t, ids, 1)
+	require.Equal(t, user1.Id, ids[0], "should've mentioned user1 with user")
+	ids, ok = mentions["@user"]
+
+	require.True(t, ok)
+	require.Len(t, ids, 2)
+	require.Equal(t, user1.Id, ids[0], "should've mentioned user1 twice with @user")
+	require.Equal(t, user1.Id, ids[1], "should've mentioned user1 twice with @user")
+
+	ids, ok = mentions["mention"]
+	require.True(t, ok)
+	require.Len(t, ids, 1)
+	require.Equal(t, user1.Id, ids[0], "should've mentioned user1 with user")
+
+	_, ok = mentions["First"]
+	require.False(t, ok, "should not have mentioned user1 with First")
+	_, ok = mentions["@channel"]
+	require.False(t, ok, "should not have mentioned any user with @channel")
+	_, ok = mentions["@all"]
+	require.False(t, ok, "should not have mentioned any user with @all")
+	_, ok = mentions["@here"]
+	require.False(t, ok, "should not have mentioned any user with @here")
+
+	// user with empty mention keys
+	userNoMentionKeys := &model.User{
+		Id:        model.NewId(),
+		FirstName: "First",
+		Username:  "User",
+		NotifyProps: map[string]string{
+			"mention_keys": ",",
+		},
 	}
+
+	channelMemberNotifyPropsMapEmptyOff := map[string]model.StringMap{
+		userNoMentionKeys.Id: {
+			"ignore_channel_mentions": model.IGNORE_CHANNEL_MENTIONS_OFF,
+		},
+	}
+
+	profiles = map[string]*model.User{userNoMentionKeys.Id: userNoMentionKeys}
+	mentions = th.App.getMentionKeywordsInChannel(profiles, true, channelMemberNotifyPropsMapEmptyOff)
+	assert.Equal(t, 1, len(mentions), "should've returned one metion keyword")
+	ids, ok = mentions["@user"]
+	assert.True(t, ok)
+	assert.Equal(t, userNoMentionKeys.Id, ids[0], "should've returned mention key of @user")
 }
 
-func TestDoesNotifyPropsAllowPushNotification(t *testing.T) {
-	userNotifyProps := make(map[string]string)
-	channelNotifyProps := make(map[string]string)
+func TestAddMentionKeywordsForUser(t *testing.T) {
+	t.Run("should add @user", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+		}
+		channelNotifyProps := map[string]string{}
 
-	user := &model.User{Id: model.NewId(), Email: "unit@test.com"}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, nil, false)
 
-	post := &model.Post{UserId: user.Id, ChannelId: model.NewId()}
+		assert.Contains(t, keywords["@user"], user.Id)
+	})
 
-	// When the post is a System Message
-	systemPost := &model.Post{UserId: user.Id, Type: model.POST_JOIN_CHANNEL}
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_ALL
-	user.NotifyProps = userNotifyProps
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, systemPost, false) {
-		t.Fatal("Should have returned false")
-	}
+	t.Run("should add custom mention keywords", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.MENTION_KEYS_NOTIFY_PROP: "apple,BANANA,OrAnGe",
+			},
+		}
+		channelNotifyProps := map[string]string{}
 
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, systemPost, true) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, nil, false)
 
-	// When default is ALL and no channel props is set
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned true")
-	}
+		assert.Contains(t, keywords["apple"], user.Id)
+		assert.Contains(t, keywords["banana"], user.Id)
+		assert.Contains(t, keywords["orange"], user.Id)
+	})
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+	t.Run("should not add empty custom keywords", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.MENTION_KEYS_NOTIFY_PROP: ",,",
+			},
+		}
+		channelNotifyProps := map[string]string{}
 
-	// When default is MENTION and no channel props is set
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_MENTION
-	user.NotifyProps = userNotifyProps
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, nil, false)
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		assert.Nil(t, keywords[""])
+	})
 
-	// When default is NONE and no channel props is set
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_NONE
-	user.NotifyProps = userNotifyProps
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+	t.Run("should add case sensitive first name if enabled", func(t *testing.T) {
+		user := &model.User{
+			Id:        model.NewId(),
+			Username:  "user",
+			FirstName: "William",
+			LastName:  "Robert",
+			NotifyProps: map[string]string{
+				model.FIRST_NAME_NOTIFY_PROP: "true",
+			},
+		}
+		channelNotifyProps := map[string]string{}
 
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, nil, false)
 
-	// WHEN default is ALL and channel is DEFAULT
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_ALL
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_DEFAULT
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned true")
-	}
+		assert.Contains(t, keywords["William"], user.Id)
+		assert.NotContains(t, keywords["william"], user.Id)
+		assert.NotContains(t, keywords["Robert"], user.Id)
+	})
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+	t.Run("should not add case sensitive first name if disabled", func(t *testing.T) {
+		user := &model.User{
+			Id:        model.NewId(),
+			Username:  "user",
+			FirstName: "William",
+			LastName:  "Robert",
+			NotifyProps: map[string]string{
+				model.FIRST_NAME_NOTIFY_PROP: "false",
+			},
+		}
+		channelNotifyProps := map[string]string{}
 
-	// WHEN default is MENTION and channel is DEFAULT
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_MENTION
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_DEFAULT
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, nil, false)
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		assert.NotContains(t, keywords["William"], user.Id)
+		assert.NotContains(t, keywords["william"], user.Id)
+		assert.NotContains(t, keywords["Robert"], user.Id)
+	})
 
-	// WHEN default is NONE and channel is DEFAULT
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_NONE
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_DEFAULT
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+	t.Run("should add @channel/@all/@here when allowed", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
+		channelNotifyProps := map[string]string{}
+		status := &model.Status{
+			Status: model.STATUS_ONLINE,
+		}
 
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, status, true)
 
-	// WHEN default is ALL and channel is ALL
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_ALL
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_ALL
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned true")
-	}
+		assert.Contains(t, keywords["@channel"], user.Id)
+		assert.Contains(t, keywords["@all"], user.Id)
+		assert.Contains(t, keywords["@here"], user.Id)
+	})
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+	t.Run("should not add @channel/@all/@here when not allowed", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
+		channelNotifyProps := map[string]string{}
+		status := &model.Status{
+			Status: model.STATUS_ONLINE,
+		}
 
-	// WHEN default is MENTION and channel is ALL
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_MENTION
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_ALL
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned true")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, status, false)
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		assert.NotContains(t, keywords["@channel"], user.Id)
+		assert.NotContains(t, keywords["@all"], user.Id)
+		assert.NotContains(t, keywords["@here"], user.Id)
+	})
 
-	// WHEN default is NONE and channel is ALL
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_NONE
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_ALL
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned true")
-	}
+	t.Run("should not add @channel/@all/@here when disabled for user", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "false",
+			},
+		}
+		channelNotifyProps := map[string]string{}
+		status := &model.Status{
+			Status: model.STATUS_ONLINE,
+		}
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, status, true)
 
-	// WHEN default is ALL and channel is MENTION
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_ALL
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_MENTION
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		assert.NotContains(t, keywords["@channel"], user.Id)
+		assert.NotContains(t, keywords["@all"], user.Id)
+		assert.NotContains(t, keywords["@here"], user.Id)
+	})
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+	t.Run("should not add @channel/@all/@here when disabled for channel", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
+		channelNotifyProps := map[string]string{
+			model.IGNORE_CHANNEL_MENTIONS_NOTIFY_PROP: model.IGNORE_CHANNEL_MENTIONS_ON,
+		}
+		status := &model.Status{
+			Status: model.STATUS_ONLINE,
+		}
 
-	// WHEN default is MENTION and channel is MENTION
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_MENTION
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_MENTION
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, status, true)
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		assert.NotContains(t, keywords["@channel"], user.Id)
+		assert.NotContains(t, keywords["@all"], user.Id)
+		assert.NotContains(t, keywords["@here"], user.Id)
+	})
 
-	// WHEN default is NONE and channel is MENTION
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_NONE
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_MENTION
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+	t.Run("should not add @here when when user is not online", func(t *testing.T) {
+		user := &model.User{
+			Id:       model.NewId(),
+			Username: "user",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
+		channelNotifyProps := map[string]string{}
+		status := &model.Status{
+			Status: model.STATUS_AWAY,
+		}
 
-	if !DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned true")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user, channelNotifyProps, status, true)
 
-	// WHEN default is ALL and channel is NONE
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_ALL
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_NONE
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		assert.Contains(t, keywords["@channel"], user.Id)
+		assert.Contains(t, keywords["@all"], user.Id)
+		assert.NotContains(t, keywords["@here"], user.Id)
+	})
 
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned false")
-	}
+	t.Run("should add for multiple users", func(t *testing.T) {
+		user1 := &model.User{
+			Id:       model.NewId(),
+			Username: "user1",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
+		user2 := &model.User{
+			Id:       model.NewId(),
+			Username: "user2",
+			NotifyProps: map[string]string{
+				model.CHANNEL_MENTIONS_NOTIFY_PROP: "true",
+			},
+		}
 
-	// WHEN default is MENTION and channel is NONE
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_MENTION
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_NONE
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
+		keywords := map[string][]string{}
+		addMentionKeywordsForUser(keywords, user1, map[string]string{}, nil, true)
+		addMentionKeywordsForUser(keywords, user2, map[string]string{}, nil, true)
 
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned false")
-	}
-
-	// WHEN default is NONE and channel is NONE
-	userNotifyProps[model.PUSH_NOTIFY_PROP] = model.USER_NOTIFY_NONE
-	user.NotifyProps = userNotifyProps
-	channelNotifyProps[model.PUSH_NOTIFY_PROP] = model.CHANNEL_NOTIFY_NONE
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, false) {
-		t.Fatal("Should have returned false")
-	}
-
-	if DoesNotifyPropsAllowPushNotification(user, channelNotifyProps, post, true) {
-		t.Fatal("Should have returned false")
-	}
+		assert.Contains(t, keywords["@user1"], user1.Id)
+		assert.Contains(t, keywords["@user2"], user2.Id)
+		assert.Contains(t, keywords["@all"], user1.Id)
+		assert.Contains(t, keywords["@all"], user2.Id)
+	})
 }
 
-func TestDoesStatusAllowPushNotification(t *testing.T) {
-	userNotifyProps := make(map[string]string)
-	userId := model.NewId()
-	channelId := model.NewId()
+func TestGetMentionsEnabledFields(t *testing.T) {
 
-	offline := &model.Status{UserId: userId, Status: model.STATUS_OFFLINE, Manual: false, LastActivityAt: 0, ActiveChannel: ""}
-	away := &model.Status{UserId: userId, Status: model.STATUS_AWAY, Manual: false, LastActivityAt: 0, ActiveChannel: ""}
-	online := &model.Status{UserId: userId, Status: model.STATUS_ONLINE, Manual: false, LastActivityAt: model.GetMillis(), ActiveChannel: ""}
-	dnd := &model.Status{UserId: userId, Status: model.STATUS_DND, Manual: true, LastActivityAt: model.GetMillis(), ActiveChannel: ""}
-
-	userNotifyProps["push_status"] = model.STATUS_ONLINE
-	// WHEN props is ONLINE and user is offline
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, channelId) {
-		t.Fatal("Should have been true")
+	attachmentWithTextAndPreText := model.SlackAttachment{
+		Text:    "@here with mentions",
+		Pretext: "@Channel some comment for the channel",
 	}
 
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, "") {
-		t.Fatal("Should have been true")
+	attachmentWithOutPreText := model.SlackAttachment{
+		Text: "some text",
+	}
+	attachments := []*model.SlackAttachment{
+		&attachmentWithTextAndPreText,
+		&attachmentWithOutPreText,
 	}
 
-	// WHEN props is ONLINE and user is away
-	if !DoesStatusAllowPushNotification(userNotifyProps, away, channelId) {
-		t.Fatal("Should have been true")
-	}
-
-	if !DoesStatusAllowPushNotification(userNotifyProps, away, "") {
-		t.Fatal("Should have been true")
-	}
-
-	// WHEN props is ONLINE and user is online
-	if !DoesStatusAllowPushNotification(userNotifyProps, online, channelId) {
-		t.Fatal("Should have been true")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, online, "") {
-		t.Fatal("Should have been false")
-	}
-
-	// WHEN props is ONLINE and user is dnd
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, "") {
-		t.Fatal("Should have been false")
-	}
-
-	userNotifyProps["push_status"] = model.STATUS_AWAY
-	// WHEN props is AWAY and user is offline
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, channelId) {
-		t.Fatal("Should have been true")
-	}
-
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, "") {
-		t.Fatal("Should have been true")
-	}
-
-	// WHEN props is AWAY and user is away
-	if !DoesStatusAllowPushNotification(userNotifyProps, away, channelId) {
-		t.Fatal("Should have been true")
-	}
-
-	if !DoesStatusAllowPushNotification(userNotifyProps, away, "") {
-		t.Fatal("Should have been true")
-	}
-
-	// WHEN props is AWAY and user is online
-	if DoesStatusAllowPushNotification(userNotifyProps, online, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, online, "") {
-		t.Fatal("Should have been false")
-	}
-
-	// WHEN props is AWAY and user is dnd
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, "") {
-		t.Fatal("Should have been false")
-	}
-
-	userNotifyProps["push_status"] = model.STATUS_OFFLINE
-	// WHEN props is OFFLINE and user is offline
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, channelId) {
-		t.Fatal("Should have been true")
-	}
-
-	if !DoesStatusAllowPushNotification(userNotifyProps, offline, "") {
-		t.Fatal("Should have been true")
-	}
-
-	// WHEN props is OFFLINE and user is away
-	if DoesStatusAllowPushNotification(userNotifyProps, away, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, away, "") {
-		t.Fatal("Should have been false")
-	}
-
-	// WHEN props is OFFLINE and user is online
-	if DoesStatusAllowPushNotification(userNotifyProps, online, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, online, "") {
-		t.Fatal("Should have been false")
-	}
-
-	// WHEN props is OFFLINE and user is dnd
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, channelId) {
-		t.Fatal("Should have been false")
-	}
-
-	if DoesStatusAllowPushNotification(userNotifyProps, dnd, "") {
-		t.Fatal("Should have been false")
-	}
-
-}
-
-func TestGetDirectMessageNotificationEmailSubject(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	expectedPrefix := "[http://localhost:8065] New Direct Message from sender on"
-	post := &model.Post{
-		CreateAt: 1501804801000,
-	}
-	translateFunc := utils.GetUserTranslations("en")
-	subject := getDirectMessageNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "sender")
-	if !strings.HasPrefix(subject, expectedPrefix) {
-		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
-	}
-}
-
-func TestGetNotificationEmailSubject(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	expectedPrefix := "[http://localhost:8065] Notification in team on"
-	post := &model.Post{
-		CreateAt: 1501804801000,
-	}
-	translateFunc := utils.GetUserTranslations("en")
-	subject := getNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "team")
-	if !strings.HasPrefix(subject, expectedPrefix) {
-		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
-	}
-}
-
-func TestGetNotificationEmailBodyFullNotificationPublicChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
 	post := &model.Post{
 		Message: "This is the message",
+		Props: model.StringInterface{
+			"attachments": attachments,
+		},
 	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_OPEN,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
-	translateFunc := utils.GetUserTranslations("en")
+	expectedFields := []string{
+		"This is the message",
+		"@Channel some comment for the channel",
+		"@here with mentions",
+		"some text"}
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification.") {
-		t.Fatal("Expected email text 'You have a new notification. Got " + body)
-	}
-	if !strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Expected email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if !strings.Contains(body, senderName+" - ") {
-		t.Fatal("Expected email text '" + senderName + " - '. Got " + body)
-	}
-	if !strings.Contains(body, post.Message) {
-		t.Fatal("Expected email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
+	mentionEnabledFields := getMentionsEnabledFields(post)
+
+	assert.EqualValues(t, 4, len(mentionEnabledFields))
+	assert.EqualValues(t, expectedFields, mentionEnabledFields)
 }
 
-func TestGetNotificationEmailBodyFullNotificationGroupChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
+func TestPostNotificationGetChannelName(t *testing.T) {
+	sender := &model.User{Id: model.NewId(), Username: "sender", FirstName: "Sender", LastName: "Sender", Nickname: "Sender"}
+	recipient := &model.User{Id: model.NewId(), Username: "recipient", FirstName: "Recipient", LastName: "Recipient", Nickname: "Recipient"}
+	otherUser := &model.User{Id: model.NewId(), Username: "other", FirstName: "Other", LastName: "Other", Nickname: "Other"}
+	profileMap := map[string]*model.User{
+		sender.Id:    sender,
+		recipient.Id: recipient,
+		otherUser.Id: otherUser,
+	}
 
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_GROUP,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification.") {
-		t.Fatal("Expected email text 'You have a new notification. Got " + body)
-	}
-	if !strings.Contains(body, "CHANNEL: Group Message") {
-		t.Fatal("Expected email text 'CHANNEL: Group Message'. Got " + body)
-	}
-	if !strings.Contains(body, senderName+" - ") {
-		t.Fatal("Expected email text '" + senderName + " - '. Got " + body)
-	}
-	if !strings.Contains(body, post.Message) {
-		t.Fatal("Expected email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetNotificationEmailBodyFullNotificationPrivateChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_PRIVATE,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification.") {
-		t.Fatal("Expected email text 'You have a new notification. Got " + body)
-	}
-	if !strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Expected email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if !strings.Contains(body, senderName+" - ") {
-		t.Fatal("Expected email text '" + senderName + " - '. Got " + body)
-	}
-	if !strings.Contains(body, post.Message) {
-		t.Fatal("Expected email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetNotificationEmailBodyFullNotificationDirectChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_DIRECT,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new direct message.") {
-		t.Fatal("Expected email text 'You have a new direct message. Got " + body)
-	}
-	if !strings.Contains(body, senderName+" - ") {
-		t.Fatal("Expected email text '" + senderName + " - '. Got " + body)
-	}
-	if !strings.Contains(body, post.Message) {
-		t.Fatal("Expected email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-// from here
-func TestGetNotificationEmailBodyGenericNotificationPublicChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_OPEN,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification from "+senderName) {
-		t.Fatal("Expected email text 'You have a new notification from " + senderName + "'. Got " + body)
-	}
-	if strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Did not expect email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if strings.Contains(body, post.Message) {
-		t.Fatal("Did not expect email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetNotificationEmailBodyGenericNotificationGroupChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_GROUP,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification from "+senderName) {
-		t.Fatal("Expected email text 'You have a new notification from " + senderName + "'. Got " + body)
-	}
-	if strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Did not expect email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if strings.Contains(body, post.Message) {
-		t.Fatal("Did not expect email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetNotificationEmailBodyGenericNotificationPrivateChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_PRIVATE,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new notification from "+senderName) {
-		t.Fatal("Expected email text 'You have a new notification from " + senderName + "'. Got " + body)
-	}
-	if strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Did not expect email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if strings.Contains(body, post.Message) {
-		t.Fatal("Did not expect email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetNotificationEmailBodyGenericNotificationDirectChannel(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	recipient := &model.User{}
-	post := &model.Post{
-		Message: "This is the message",
-	}
-	channel := &model.Channel{
-		DisplayName: "ChannelName",
-		Type:        model.CHANNEL_DIRECT,
-	}
-	senderName := "sender"
-	teamName := "team"
-	teamURL := "http://localhost:8065/" + teamName
-	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
-	translateFunc := utils.GetUserTranslations("en")
-
-	body := th.App.getNotificationEmailBody(recipient, post, channel, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
-	if !strings.Contains(body, "You have a new direct message from "+senderName) {
-		t.Fatal("Expected email text 'You have a new direct message from " + senderName + "'. Got " + body)
-	}
-	if strings.Contains(body, "CHANNEL: "+channel.DisplayName) {
-		t.Fatal("Did not expect email text 'CHANNEL: " + channel.DisplayName + "'. Got " + body)
-	}
-	if strings.Contains(body, post.Message) {
-		t.Fatal("Did not expect email text '" + post.Message + "'. Got " + body)
-	}
-	if !strings.Contains(body, teamURL) {
-		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
-	}
-}
-
-func TestGetPushNotificationMessage(t *testing.T) {
-	th := Setup()
-	defer th.TearDown()
-
-	for name, tc := range map[string]struct {
-		Message                  string
-		WasMentioned             bool
-		HasFiles                 bool
-		Locale                   string
-		PushNotificationContents string
-		ChannelType              string
-
-		ExpectedMessage  string
-		ExpectedCategory string
+	for name, testCase := range map[string]struct {
+		channel     *model.Channel
+		nameFormat  string
+		recipientId string
+		expected    string
 	}{
-		"full message, public channel, no mention": {
-			Message:          "this is a message",
-			ChannelType:      model.CHANNEL_OPEN,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"regular channel": {
+			channel:  &model.Channel{Type: model.CHANNEL_OPEN, Name: "channel", DisplayName: "My Channel"},
+			expected: "My Channel",
 		},
-		"full message, public channel, mention": {
-			Message:          "this is a message",
-			WasMentioned:     true,
-			ChannelType:      model.CHANNEL_OPEN,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"direct channel, unspecified": {
+			channel:  &model.Channel{Type: model.CHANNEL_DIRECT},
+			expected: "@sender",
 		},
-		"full message, private channel, no mention": {
-			Message:          "this is a message",
-			ChannelType:      model.CHANNEL_PRIVATE,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"direct channel, username": {
+			channel:    &model.Channel{Type: model.CHANNEL_DIRECT},
+			nameFormat: model.SHOW_USERNAME,
+			expected:   "@sender",
 		},
-		"full message, private channel, mention": {
-			Message:          "this is a message",
-			WasMentioned:     true,
-			ChannelType:      model.CHANNEL_PRIVATE,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"direct channel, full name": {
+			channel:    &model.Channel{Type: model.CHANNEL_DIRECT},
+			nameFormat: model.SHOW_FULLNAME,
+			expected:   "Sender Sender",
 		},
-		"full message, group message channel, no mention": {
-			Message:          "this is a message",
-			ChannelType:      model.CHANNEL_GROUP,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"direct channel, nickname": {
+			channel:    &model.Channel{Type: model.CHANNEL_DIRECT},
+			nameFormat: model.SHOW_NICKNAME_FULLNAME,
+			expected:   "Sender",
 		},
-		"full message, group message channel, mention": {
-			Message:          "this is a message",
-			WasMentioned:     true,
-			ChannelType:      model.CHANNEL_GROUP,
-			ExpectedMessage:  "user in channel: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"group channel, unspecified": {
+			channel:  &model.Channel{Type: model.CHANNEL_GROUP},
+			expected: "other, sender",
 		},
-		"full message, direct message channel, no mention": {
-			Message:          "this is a message",
-			ChannelType:      model.CHANNEL_DIRECT,
-			ExpectedMessage:  "user: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"group channel, username": {
+			channel:    &model.Channel{Type: model.CHANNEL_GROUP},
+			nameFormat: model.SHOW_USERNAME,
+			expected:   "other, sender",
 		},
-		"full message, direct message channel, mention": {
-			Message:          "this is a message",
-			WasMentioned:     true,
-			ChannelType:      model.CHANNEL_DIRECT,
-			ExpectedMessage:  "user: this is a message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
+		"group channel, full name": {
+			channel:    &model.Channel{Type: model.CHANNEL_GROUP},
+			nameFormat: model.SHOW_FULLNAME,
+			expected:   "Other Other, Sender Sender",
 		},
-		"generic message with channel, public channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_OPEN,
-			ExpectedMessage:          "user posted in channel",
+		"group channel, nickname": {
+			channel:    &model.Channel{Type: model.CHANNEL_GROUP},
+			nameFormat: model.SHOW_NICKNAME_FULLNAME,
+			expected:   "Other, Sender",
 		},
-		"generic message with channel, public channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_OPEN,
-			ExpectedMessage:          "user mentioned you in channel",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message with channel, private channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_PRIVATE,
-			ExpectedMessage:          "user posted in channel",
-		},
-		"generic message with channel, private channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_PRIVATE,
-			ExpectedMessage:          "user mentioned you in channel",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message with channel, group message channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_GROUP,
-			ExpectedMessage:          "user posted in channel",
-		},
-		"generic message with channel, group message channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_GROUP,
-			ExpectedMessage:          "user mentioned you in channel",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message with channel, direct message channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_DIRECT,
-			ExpectedMessage:          "user sent you a direct message",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message with channel, direct message channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NOTIFICATION,
-			ChannelType:              model.CHANNEL_DIRECT,
-			ExpectedMessage:          "user sent you a direct message",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message without channel, public channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_OPEN,
-			ExpectedMessage:          "user posted a message",
-		},
-		"generic message without channel, public channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_OPEN,
-			ExpectedMessage:          "user mentioned you",
-		},
-		"generic message without channel, private channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_PRIVATE,
-			ExpectedMessage:          "user posted a message",
-		},
-		"generic message without channel, private channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_PRIVATE,
-			ExpectedMessage:          "user mentioned you",
-		},
-		"generic message without channel, group message channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_GROUP,
-			ExpectedMessage:          "user posted a message",
-		},
-		"generic message without channel, group message channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_GROUP,
-			ExpectedMessage:          "user mentioned you",
-		},
-		"generic message without channel, direct message channel, no mention": {
-			Message:                  "this is a message",
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_DIRECT,
-			ExpectedMessage:          "user sent you a direct message",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"generic message without channel, direct message channel, mention": {
-			Message:                  "this is a message",
-			WasMentioned:             true,
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_DIRECT,
-			ExpectedMessage:          "user sent you a direct message",
-			ExpectedCategory:         model.CATEGORY_CAN_REPLY,
-		},
-		"only files, public channel": {
-			HasFiles:         true,
-			ChannelType:      model.CHANNEL_OPEN,
-			ExpectedMessage:  "user uploaded one or more files in channel",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
-		},
-		"only files, private channel": {
-			HasFiles:         true,
-			ChannelType:      model.CHANNEL_PRIVATE,
-			ExpectedMessage:  "user uploaded one or more files in channel",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
-		},
-		"only files, group message channel": {
-			HasFiles:         true,
-			ChannelType:      model.CHANNEL_GROUP,
-			ExpectedMessage:  "user uploaded one or more files in channel",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
-		},
-		"only files, direct message channel": {
-			HasFiles:         true,
-			ChannelType:      model.CHANNEL_DIRECT,
-			ExpectedMessage:  "user uploaded one or more files in a direct message",
-			ExpectedCategory: model.CATEGORY_CAN_REPLY,
-		},
-		"only files without channel, public channel": {
-			HasFiles:                 true,
-			PushNotificationContents: model.GENERIC_NO_CHANNEL_NOTIFICATION,
-			ChannelType:              model.CHANNEL_OPEN,
-			ExpectedMessage:          "user uploaded one or more files",
+		"group channel, not excluding current user": {
+			channel:     &model.Channel{Type: model.CHANNEL_GROUP},
+			nameFormat:  model.SHOW_NICKNAME_FULLNAME,
+			expected:    "Other, Sender",
+			recipientId: "",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			locale := tc.Locale
-			if locale == "" {
-				locale = "en"
+			notification := &PostNotification{
+				Channel:    testCase.channel,
+				Sender:     sender,
+				ProfileMap: profileMap,
 			}
 
-			pushNotificationContents := tc.PushNotificationContents
-			if pushNotificationContents == "" {
-				pushNotificationContents = model.FULL_NOTIFICATION
+			recipientId := recipient.Id
+			if testCase.recipientId != "" {
+				recipientId = testCase.recipientId
 			}
 
-			th.App.UpdateConfig(func(cfg *model.Config) {
-				*cfg.EmailSettings.PushNotificationContents = pushNotificationContents
-			})
-
-			if actualMessage, actualCategory := th.App.getPushNotificationMessage(
-				tc.Message,
-				tc.WasMentioned,
-				tc.HasFiles,
-				"user",
-				"channel",
-				tc.ChannelType,
-				utils.GetUserTranslations(locale),
-			); actualMessage != tc.ExpectedMessage {
-				t.Fatalf("Received incorrect push notification message `%v`, expected `%v`", actualMessage, tc.ExpectedMessage)
-			} else if actualCategory != tc.ExpectedCategory {
-				t.Fatalf("Received incorrect push notification category `%v`, expected `%v`", actualCategory, tc.ExpectedCategory)
-			}
+			assert.Equal(t, testCase.expected, notification.GetChannelName(testCase.nameFormat, recipientId))
 		})
 	}
+}
+
+func TestPostNotificationGetSenderName(t *testing.T) {
+	th := Setup(t)
+	defer th.TearDown()
+
+	defaultChannel := &model.Channel{Type: model.CHANNEL_OPEN}
+	defaultPost := &model.Post{Props: model.StringInterface{}}
+	sender := &model.User{Id: model.NewId(), Username: "sender", FirstName: "Sender", LastName: "Sender", Nickname: "Sender"}
+
+	overriddenPost := &model.Post{
+		Props: model.StringInterface{
+			"override_username": "Overridden",
+			"from_webhook":      "true",
+		},
+	}
+
+	for name, testCase := range map[string]struct {
+		channel        *model.Channel
+		post           *model.Post
+		nameFormat     string
+		allowOverrides bool
+		expected       string
+	}{
+		"name format unspecified": {
+			expected: "@" + sender.Username,
+		},
+		"name format username": {
+			nameFormat: model.SHOW_USERNAME,
+			expected:   "@" + sender.Username,
+		},
+		"name format full name": {
+			nameFormat: model.SHOW_FULLNAME,
+			expected:   sender.FirstName + " " + sender.LastName,
+		},
+		"name format nickname": {
+			nameFormat: model.SHOW_NICKNAME_FULLNAME,
+			expected:   sender.Nickname,
+		},
+		"system message": {
+			post:     &model.Post{Type: model.POST_SYSTEM_MESSAGE_PREFIX + "custom"},
+			expected: utils.T("system.message.name"),
+		},
+		"overridden username": {
+			post:           overriddenPost,
+			allowOverrides: true,
+			expected:       overriddenPost.Props["override_username"].(string),
+		},
+		"overridden username, direct channel": {
+			channel:        &model.Channel{Type: model.CHANNEL_DIRECT},
+			post:           overriddenPost,
+			allowOverrides: true,
+			expected:       "@" + sender.Username,
+		},
+		"overridden username, overrides disabled": {
+			post:           overriddenPost,
+			allowOverrides: false,
+			expected:       "@" + sender.Username,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			channel := defaultChannel
+			if testCase.channel != nil {
+				channel = testCase.channel
+			}
+
+			post := defaultPost
+			if testCase.post != nil {
+				post = testCase.post
+			}
+
+			notification := &PostNotification{
+				Channel: channel,
+				Post:    post,
+				Sender:  sender,
+			}
+
+			assert.Equal(t, testCase.expected, notification.GetSenderName(testCase.nameFormat, testCase.allowOverrides))
+		})
+	}
+}
+
+func TestIsKeywordMultibyte(t *testing.T) {
+	id1 := model.NewId()
+
+	for name, tc := range map[string]struct {
+		Message     string
+		Attachments []*model.SlackAttachment
+		Keywords    map[string][]string
+		Expected    *ExplicitMentions
+	}{
+		"MultibyteCharacter": {
+			Message:  "My name is 萌",
+			Keywords: map[string][]string{"萌": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterWithNoUser": {
+			Message:  "My name is 萌",
+			Keywords: map[string][]string{"萌": {}},
+			Expected: &ExplicitMentions{
+				Mentions: nil,
+			},
+		},
+		"MultibyteCharacterAtBeginningOfSentence": {
+			Message:  "이메일을 보내다.",
+			Keywords: map[string][]string{"이메일": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterAtBeginningOfSentenceWithNoUser": {
+			Message:  "이메일을 보내다.",
+			Keywords: map[string][]string{"이메일": {}},
+			Expected: &ExplicitMentions{
+				Mentions: nil,
+			},
+		},
+		"MultibyteCharacterInPartOfSentence": {
+			Message:  "我爱吃番茄炒饭",
+			Keywords: map[string][]string{"番茄": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterInPartOfSentenceWithNoUser": {
+			Message:  "我爱吃番茄炒饭",
+			Keywords: map[string][]string{"番茄": {}},
+			Expected: &ExplicitMentions{
+				Mentions: nil,
+			},
+		},
+		"MultibyteCharacterAtEndOfSentence": {
+			Message:  "こんにちは、世界",
+			Keywords: map[string][]string{"世界": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterAtEndOfSentenceWithNoUser": {
+			Message:  "こんにちは、世界",
+			Keywords: map[string][]string{"世界": {}},
+			Expected: &ExplicitMentions{
+				Mentions: nil,
+			},
+		},
+		"MultibyteCharacterTwiceInSentence": {
+			Message:  "石橋さんが石橋を渡る",
+			Keywords: map[string][]string{"石橋": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"MultibyteCharacterTwiceInSentenceWithNoUser": {
+			Message:  "石橋さんが石橋を渡る",
+			Keywords: map[string][]string{"石橋": {}},
+			Expected: &ExplicitMentions{
+				Mentions: nil,
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			post := &model.Post{
+				Message: tc.Message,
+				Props: model.StringInterface{
+					"attachments": tc.Attachments,
+				},
+			}
+
+			m := getExplicitMentions(post, tc.Keywords)
+			// if tc.Expected.MentionedUserIds == nil {
+			// 	tc.Expected.MentionedUserIds = make(map[string]bool)
+			// }
+			assert.EqualValues(t, tc.Expected, m)
+		})
+	}
+}
+
+func TestAddMention(t *testing.T) {
+	t.Run("should initialize Mentions and store new mentions", func(t *testing.T) {
+		m := &ExplicitMentions{}
+
+		userId1 := model.NewId()
+		userId2 := model.NewId()
+
+		m.addMention(userId1, KeywordMention)
+		m.addMention(userId2, CommentMention)
+
+		assert.Equal(t, map[string]MentionType{
+			userId1: KeywordMention,
+			userId2: CommentMention,
+		}, m.Mentions)
+	})
+
+	t.Run("should replace existing mentions with higher priority ones", func(t *testing.T) {
+		m := &ExplicitMentions{}
+
+		userId1 := model.NewId()
+		userId2 := model.NewId()
+
+		m.addMention(userId1, ThreadMention)
+		m.addMention(userId2, DMMention)
+
+		m.addMention(userId1, ChannelMention)
+		m.addMention(userId2, KeywordMention)
+
+		assert.Equal(t, map[string]MentionType{
+			userId1: ChannelMention,
+			userId2: KeywordMention,
+		}, m.Mentions)
+	})
+
+	t.Run("should not replace high priority mentions with low priority ones", func(t *testing.T) {
+		m := &ExplicitMentions{}
+
+		userId1 := model.NewId()
+		userId2 := model.NewId()
+
+		m.addMention(userId1, KeywordMention)
+		m.addMention(userId2, CommentMention)
+
+		m.addMention(userId1, DMMention)
+		m.addMention(userId2, ThreadMention)
+
+		assert.Equal(t, map[string]MentionType{
+			userId1: KeywordMention,
+			userId2: CommentMention,
+		}, m.Mentions)
+	})
+}
+
+func TestCheckForMentionUsers(t *testing.T) {
+	id1 := model.NewId()
+	id2 := model.NewId()
+
+	for name, tc := range map[string]struct {
+		Word        string
+		Attachments []*model.SlackAttachment
+		Keywords    map[string][]string
+		Expected    *ExplicitMentions
+	}{
+		"Nobody": {
+			Word:     "nothing",
+			Keywords: map[string][]string{},
+			Expected: &ExplicitMentions{},
+		},
+		"UppercaseUser1": {
+			Word:     "@User",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"LowercaseUser1": {
+			Word:     "@user",
+			Keywords: map[string][]string{"@user": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"LowercaseUser2": {
+			Word:     "@user2",
+			Keywords: map[string][]string{"@user2": {id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id2: KeywordMention,
+				},
+			},
+		},
+		"UppercaseUser2": {
+			Word:     "@UsEr2",
+			Keywords: map[string][]string{"@user2": {id2}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id2: KeywordMention,
+				},
+			},
+		},
+		"HereMention": {
+			Word: "@here",
+			Expected: &ExplicitMentions{
+				HereMentioned: true,
+			},
+		},
+		"ChannelMention": {
+			Word: "@channel",
+			Expected: &ExplicitMentions{
+				ChannelMentioned: true,
+			},
+		},
+		"AllMention": {
+			Word: "@all",
+			Expected: &ExplicitMentions{
+				AllMentioned: true,
+			},
+		},
+		"UppercaseHere": {
+			Word: "@HeRe",
+			Expected: &ExplicitMentions{
+				HereMentioned: true,
+			},
+		},
+		"UppercaseChannel": {
+			Word: "@ChaNNel",
+			Expected: &ExplicitMentions{
+				ChannelMentioned: true,
+			},
+		},
+		"UppercaseAll": {
+			Word: "@ALL",
+			Expected: &ExplicitMentions{
+				AllMentioned: true,
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+
+			e := &ExplicitMentions{}
+			e.checkForMention(tc.Word, tc.Keywords)
+
+			assert.EqualValues(t, tc.Expected, e)
+		})
+	}
+}
+func TestProcessText(t *testing.T) {
+	id1 := model.NewId()
+
+	for name, tc := range map[string]struct {
+		Text     string
+		Keywords map[string][]string
+		Expected *ExplicitMentions
+	}{
+		"Mention user in text": {
+			Text:     "hello user @user1",
+			Keywords: map[string][]string{"@user1": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Mention user after ending a sentence with full stop": {
+			Text:     "hello user.@user1",
+			Keywords: map[string][]string{"@user1": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Mention user after hyphen": {
+			Text:     "hello user-@user1",
+			Keywords: map[string][]string{"@user1": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Mention user after colon": {
+			Text:     "hello user:@user1",
+			Keywords: map[string][]string{"@user1": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+			},
+		},
+		"Mention here after colon": {
+			Text:     "hello all:@here",
+			Keywords: map[string][]string{},
+			Expected: &ExplicitMentions{
+				HereMentioned: true,
+			},
+		},
+		"Mention all after hyphen": {
+			Text:     "hello all-@all",
+			Keywords: map[string][]string{},
+			Expected: &ExplicitMentions{
+				AllMentioned: true,
+			},
+		},
+		"Mention channel after full stop": {
+			Text:     "hello channel.@channel",
+			Keywords: map[string][]string{},
+			Expected: &ExplicitMentions{
+				ChannelMentioned: true,
+			},
+		},
+		"Mention other pontential users or system calls": {
+			Text:     "hello @potentialuser and @otherpotentialuser",
+			Keywords: map[string][]string{},
+			Expected: &ExplicitMentions{
+				OtherPotentialMentions: []string{"potentialuser", "otherpotentialuser"},
+			},
+		},
+		"Mention a real user and another potential user": {
+			Text:     "@user1, you can use @systembot to get help",
+			Keywords: map[string][]string{"@user1": {id1}},
+			Expected: &ExplicitMentions{
+				Mentions: map[string]MentionType{
+					id1: KeywordMention,
+				},
+				OtherPotentialMentions: []string{"systembot"},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := &ExplicitMentions{}
+			e.processText(tc.Text, tc.Keywords)
+
+			assert.EqualValues(t, tc.Expected, e)
+		})
+	}
+}
+
+func TestGetNotificationNameFormat(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	t.Run("show full name on", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.PrivacySettings.ShowFullName = true
+			*cfg.TeamSettings.TeammateNameDisplay = model.SHOW_FULLNAME
+		})
+
+		assert.Equal(t, model.SHOW_FULLNAME, th.App.GetNotificationNameFormat(th.BasicUser))
+	})
+
+	t.Run("show full name off", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.PrivacySettings.ShowFullName = false
+			*cfg.TeamSettings.TeammateNameDisplay = model.SHOW_FULLNAME
+		})
+
+		assert.Equal(t, model.SHOW_USERNAME, th.App.GetNotificationNameFormat(th.BasicUser))
+	})
+}
+
+func TestUserAllowsEmail(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+
+	t.Run("should return true", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOffline(user.Id, true)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.True(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: "some-post-type"}))
+	})
+
+	t.Run("should return false in case the status is ONLINE", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOnline(user.Id, true)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: "some-post-type"}))
+	})
+
+	t.Run("should return false in case the EMAIL_NOTIFY_PROP is false", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOffline(user.Id, true)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       "false",
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: "some-post-type"}))
+	})
+
+	t.Run("should return false in case the MARK_UNREAD_NOTIFY_PROP is CHANNEL_MARK_UNREAD_MENTION", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOffline(user.Id, true)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_MENTION,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: "some-post-type"}))
+	})
+
+	t.Run("should return false in case the Post type is POST_AUTO_RESPONDER", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOffline(user.Id, true)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: model.POST_AUTO_RESPONDER}))
+	})
+
+	t.Run("should return false in case the status is STATUS_OUT_OF_OFFICE", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusOutOfOffice(user.Id)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: model.POST_AUTO_RESPONDER}))
+	})
+
+	t.Run("should return false in case the status is STATUS_ONLINE", func(t *testing.T) {
+		user := th.CreateUser()
+
+		th.App.SetStatusDoNotDisturb(user.Id)
+
+		channelMemberNotificationProps := model.StringMap{
+			model.EMAIL_NOTIFY_PROP:       model.CHANNEL_NOTIFY_DEFAULT,
+			model.MARK_UNREAD_NOTIFY_PROP: model.CHANNEL_MARK_UNREAD_ALL,
+		}
+
+		assert.False(t, th.App.userAllowsEmail(user, channelMemberNotificationProps, &model.Post{Type: model.POST_AUTO_RESPONDER}))
+	})
+
 }

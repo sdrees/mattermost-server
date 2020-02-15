@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package manualtesting
 
@@ -11,30 +11,33 @@ import (
 	"strconv"
 	"time"
 
-	l4g "github.com/alecthomas/log4go"
-	"github.com/mattermost/mattermost-server/api"
-	"github.com/mattermost/mattermost-server/app"
-	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/utils"
+	"github.com/mattermost/mattermost-server/v5/api4"
+	"github.com/mattermost/mattermost-server/v5/app"
+	"github.com/mattermost/mattermost-server/v5/mlog"
+	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v5/utils"
+	"github.com/mattermost/mattermost-server/v5/web"
 )
 
+// TestEnvironment is a helper struct used for tests in manualtesting.
 type TestEnvironment struct {
 	Params        map[string][]string
-	Client        *model.Client
-	CreatedTeamId string
-	CreatedUserId string
-	Context       *api.Context
+	Client        *model.Client4
+	CreatedTeamID string
+	CreatedUserID string
+	Context       *web.Context
 	Writer        http.ResponseWriter
 	Request       *http.Request
 }
 
-func Init(api3 *api.API) {
-	api3.BaseRoutes.Root.Handle("/manualtest", api3.AppHandler(manualTest)).Methods("GET")
+// Init adds manualtest endpoint to the API.
+func Init(api4 *api4.API) {
+	api4.BaseRoutes.Root.Handle("/manualtest", api4.ApiHandler(manualTest)).Methods("GET")
 }
 
-func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
+func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 	// Let the world know
-	l4g.Info(utils.T("manaultesting.manual_test.setup.info"))
+	mlog.Info("Setting up for manual test...")
 
 	// URL Parameters
 	params, err := url.ParseQuery(r.URL.RawQuery)
@@ -51,11 +54,11 @@ func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
 		hash := hasher.Sum32()
 		rand.Seed(int64(hash))
 	} else {
-		l4g.Debug(utils.T("manaultesting.manual_test.uid.debug"))
+		mlog.Debug("No uid in URL")
 	}
 
 	// Create a client for tests to use
-	client := model.NewClient("http://localhost" + *c.App.Config().ServiceSettings.ListenAddress)
+	client := model.NewAPIv4Client("http://localhost" + *c.App.Config().ServiceSettings.ListenAddress)
 
 	// Check for username parameter and create a user if present
 	username, ok1 := params["username"]
@@ -63,30 +66,28 @@ func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
 	var teamID string
 	var userID string
 	if ok1 && ok2 {
-		l4g.Info(utils.T("manaultesting.manual_test.create.info"))
+		mlog.Info("Creating user and team")
 		// Create team for testing
 		team := &model.Team{
 			DisplayName: teamDisplayName[0],
-			Name:        utils.RandomName(utils.Range{Begin: 20, End: 20}, utils.LOWERCASE),
+			Name:        "zz" + utils.RandomName(utils.Range{Begin: 20, End: 20}, utils.LOWERCASE),
 			Email:       "success+" + model.NewId() + "simulator.amazonses.com",
 			Type:        model.TEAM_OPEN,
 		}
 
-		if result := <-c.App.Srv.Store.Team().Save(team); result.Err != nil {
-			c.Err = result.Err
+		createdTeam, err := c.App.Srv().Store.Team().Save(team)
+		if err != nil {
+			c.Err = err
 			return
-		} else {
-
-			createdTeam := result.Data.(*model.Team)
-
-			channel := &model.Channel{DisplayName: "Town Square", Name: "town-square", Type: model.CHANNEL_OPEN, TeamId: createdTeam.Id}
-			if _, err := c.App.CreateChannel(channel, false); err != nil {
-				c.Err = err
-				return
-			}
-
-			teamID = createdTeam.Id
 		}
+
+		channel := &model.Channel{DisplayName: "Town Square", Name: "town-square", Type: model.CHANNEL_OPEN, TeamId: createdTeam.Id}
+		if _, err := c.App.CreateChannel(channel, false); err != nil {
+			c.Err = err
+			return
+		}
+
+		teamID = createdTeam.Id
 
 		// Create user for testing
 		user := &model.User{
@@ -94,26 +95,25 @@ func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
 			Nickname: username[0],
 			Password: app.USER_PASSWORD}
 
-		result, err := client.CreateUser(user, "")
-		if err != nil {
-			c.Err = err
+		user, resp := client.CreateUser(user)
+		if resp.Error != nil {
+			c.Err = resp.Error
 			return
 		}
 
-		<-c.App.Srv.Store.User().VerifyEmail(result.Data.(*model.User).Id)
-		<-c.App.Srv.Store.Team().SaveMember(&model.TeamMember{TeamId: teamID, UserId: result.Data.(*model.User).Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam)
+		c.App.Srv().Store.User().VerifyEmail(user.Id, user.Email)
+		c.App.Srv().Store.Team().SaveMember(&model.TeamMember{TeamId: teamID, UserId: user.Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam)
 
-		newuser := result.Data.(*model.User)
-		userID = newuser.Id
+		userID = user.Id
 
 		// Login as user to generate auth token
-		_, err = client.LoginById(newuser.Id, app.USER_PASSWORD)
-		if err != nil {
-			c.Err = err
+		_, resp = client.LoginById(user.Id, app.USER_PASSWORD)
+		if resp.Error != nil {
+			c.Err = resp.Error
 			return
 		}
 
-		// Respond with an auth token this can be overriden by a specific test as required
+		// Respond with an auth token this can be overridden by a specific test as required
 		sessionCookie := &http.Cookie{
 			Name:     model.SESSION_COOKIE_TOKEN,
 			Value:    client.AuthToken,
@@ -129,8 +129,8 @@ func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
 	env := TestEnvironment{
 		Params:        params,
 		Client:        client,
-		CreatedTeamId: teamID,
-		CreatedUserId: userID,
+		CreatedTeamID: teamID,
+		CreatedUserID: userID,
 		Context:       c,
 		Writer:        w,
 		Request:       r,
@@ -151,21 +151,19 @@ func manualTest(c *api.Context, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getChannelID(a *app.App, channelname string, teamid string, userid string) (id string, err bool) {
+func getChannelID(a app.AppIface, channelname string, teamid string, userid string) (string, bool) {
 	// Grab all the channels
-	result := <-a.Srv.Store.Channel().GetChannels(teamid, userid)
-	if result.Err != nil {
-		l4g.Debug(utils.T("manaultesting.get_channel_id.unable.debug"))
+	channels, err := a.Srv().Store.Channel().GetChannels(teamid, userid, false)
+	if err != nil {
+		mlog.Debug("Unable to get channels")
 		return "", false
 	}
 
-	data := result.Data.(model.ChannelList)
-
-	for _, channel := range data {
+	for _, channel := range *channels {
 		if channel.Name == channelname {
 			return channel.Id, true
 		}
 	}
-	l4g.Debug(utils.T("manaultesting.get_channel_id.no_found.debug"), channelname, strconv.Itoa(len(data)))
+	mlog.Debug("Could not find channel", mlog.String("Channel name", channelname), mlog.Int("Possibilities searched", len(*channels)))
 	return "", false
 }

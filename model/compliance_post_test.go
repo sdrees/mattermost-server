@@ -1,29 +1,24 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package model
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCompliancePostHeader(t *testing.T) {
-	if CompliancePostHeader()[0] != "TeamName" {
-		t.Fatal()
-	}
+	require.Equal(t, "TeamName", CompliancePostHeader()[0])
 }
 
 func TestCompliancePost(t *testing.T) {
 	o := CompliancePost{TeamName: "test", PostFileIds: "files", PostCreateAt: GetMillis()}
 	r := o.Row()
 
-	if r[0] != "test" {
-		t.Fatal()
-	}
-
-	if r[len(r)-1] != "files" {
-		t.Fatal()
-	}
+	require.Equal(t, "test", r[0])
+	require.Equal(t, "files", r[len(r)-1])
 }
 
 var cleanTests = []struct {

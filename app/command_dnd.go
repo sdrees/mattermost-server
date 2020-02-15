@@ -1,11 +1,11 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
 import (
-	"github.com/mattermost/mattermost-server/model"
-	goi18n "github.com/nicksnyder/go-i18n/i18n"
+	goi18n "github.com/mattermost/go-i18n/i18n"
+	"github.com/mattermost/mattermost-server/v5/model"
 )
 
 type DndProvider struct {
@@ -38,7 +38,7 @@ func (me *DndProvider) DoCommand(a *App, args *model.CommandArgs, message string
 		return &model.CommandResponse{ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL, Text: args.T("api.command_dnd.error")}
 	} else {
 		if status.Status == "dnd" {
-			a.SetStatusOnline(args.UserId, args.Session.Id, true)
+			a.SetStatusOnline(args.UserId, true)
 			return &model.CommandResponse{ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL, Text: args.T("api.command_dnd.disabled")}
 		}
 	}

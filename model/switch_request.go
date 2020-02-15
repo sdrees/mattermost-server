@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -15,7 +15,7 @@ type SwitchRequest struct {
 	Password       string `json:"password"`
 	NewPassword    string `json:"new_password"`
 	MfaCode        string `json:"mfa_code"`
-	LdapId         string `json:"ldap_id"`
+	LdapLoginId    string `json:"ldap_id"`
 }
 
 func (o *SwitchRequest) ToJson() string {

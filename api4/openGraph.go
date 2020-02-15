@@ -1,21 +1,31 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package api4
 
 import (
 	"net/http"
 
-	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/utils"
+	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v5/services/cache/lru"
 )
 
 const OPEN_GRAPH_METADATA_CACHE_SIZE = 10000
 
-var openGraphDataCache = utils.NewLru(OPEN_GRAPH_METADATA_CACHE_SIZE)
+var openGraphDataCache = lru.New(OPEN_GRAPH_METADATA_CACHE_SIZE)
 
 func (api *API) InitOpenGraph() {
 	api.BaseRoutes.OpenGraph.Handle("", api.ApiSessionRequired(getOpenGraphMetadata)).Methods("POST")
+
+	// Dump the image cache if the proxy settings have changed. (need switch URLs to the correct proxy)
+	api.ConfigService.AddConfigListener(func(before, after *model.Config) {
+		if (before.ImageProxySettings.Enable != after.ImageProxySettings.Enable) ||
+			(before.ImageProxySettings.ImageProxyType != after.ImageProxySettings.ImageProxyType) ||
+			(before.ImageProxySettings.RemoteImageProxyURL != after.ImageProxySettings.RemoteImageProxyURL) ||
+			(before.ImageProxySettings.RemoteImageProxyOptions != after.ImageProxySettings.RemoteImageProxyOptions) {
+			openGraphDataCache.Purge()
+		}
+	})
 }
 
 func getOpenGraphMetadata(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -40,9 +50,8 @@ func getOpenGraphMetadata(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	og := c.App.GetOpenGraphMetadata(url)
-
 	ogJSON, err := og.ToJSON()
-	openGraphDataCache.AddWithExpiresInSecs(props["url"], ogJSON, 3600) // Cache would expire after 1 hour
+	openGraphDataCache.AddWithExpiresInSecs(url, ogJSON, 3600) // Cache would expire after 1 hour
 	if err != nil {
 		w.Write([]byte(`{"url": ""}`))
 		return
