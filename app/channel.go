@@ -698,29 +698,42 @@ func (a *App) GetTeamSchemeChannelRoles(teamId string) (guestRoleName, userRoleN
 
 // GetChannelModerationsForChannel Gets a channels ChannelModerations from either the higherScoped roles or from the channel scheme roles.
 func (a *App) GetChannelModerationsForChannel(channel *model.Channel) ([]*model.ChannelModeration, *model.AppError) {
-	guestRoleName, memberRoleName, _, _ := a.GetSchemeRolesForChannel(channel.Id)
+	guestRoleName, memberRoleName, _, err := a.GetSchemeRolesForChannel(channel.Id)
+	if err != nil {
+		return nil, err
+	}
+
 	memberRole, err := a.GetRoleByName(memberRoleName)
 	if err != nil {
 		return nil, err
 	}
 
-	guestRole, err := a.GetRoleByName(guestRoleName)
+	var guestRole *model.Role
+	if len(guestRoleName) > 0 {
+		guestRole, err = a.GetRoleByName(guestRoleName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	higherScopedGuestRoleName, higherScopedMemberRoleName, _, err := a.GetTeamSchemeChannelRoles(channel.TeamId)
 	if err != nil {
 		return nil, err
 	}
-
-	higherScopedGuestRoleName, higherScopedMemberRoleName, _, _ := a.GetTeamSchemeChannelRoles(channel.TeamId)
 	higherScopedMemberRole, err := a.GetRoleByName(higherScopedMemberRoleName)
 	if err != nil {
 		return nil, err
 	}
 
-	higherScopedGuestRole, err := a.GetRoleByName(higherScopedGuestRoleName)
-	if err != nil {
-		return nil, err
+	var higherScopedGuestRole *model.Role
+	if len(guestRoleName) > 0 {
+		higherScopedGuestRole, err = a.GetRoleByName(higherScopedGuestRoleName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return buildChannelModerations(memberRole, guestRole, higherScopedMemberRole, higherScopedGuestRole), nil
+	return buildChannelModerations(channel.Type, memberRole, guestRole, higherScopedMemberRole, higherScopedGuestRole), nil
 }
 
 // PatchChannelModerationsForChannel Updates a channels scheme roles based on a given ChannelModerationPatch, if the permissions match the higher scoped role the scheme is deleted.
@@ -736,8 +749,8 @@ func (a *App) PatchChannelModerationsForChannel(channel *model.Channel, channelM
 		return nil, err
 	}
 
-	higherScopedMemberPermissions := higherScopedMemberRole.GetChannelModeratedPermissions()
-	higherScopedGuestPermissions := higherScopedGuestRole.GetChannelModeratedPermissions()
+	higherScopedMemberPermissions := higherScopedMemberRole.GetChannelModeratedPermissions(channel.Type)
+	higherScopedGuestPermissions := higherScopedGuestRole.GetChannelModeratedPermissions(channel.Type)
 
 	for _, moderationPatch := range channelModerationsPatch {
 		if moderationPatch.Roles.Members != nil && *moderationPatch.Roles.Members && !higherScopedMemberPermissions[*moderationPatch.Name] {
@@ -753,6 +766,9 @@ func (a *App) PatchChannelModerationsForChannel(channel *model.Channel, channelM
 		if _, err = a.CreateChannelScheme(channel); err != nil {
 			return nil, err
 		}
+
+		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_CHANNEL_SCHEME_UPDATED, "", channel.Id, "", nil)
+		a.Publish(message)
 		mlog.Info("Permission scheme created.", mlog.String("channel_id", channel.Id), mlog.String("channel_name", channel.Name))
 	}
 
@@ -796,6 +812,10 @@ func (a *App) PatchChannelModerationsForChannel(channel *model.Channel, channelM
 		if _, err = a.DeleteChannelScheme(channel); err != nil {
 			return nil, err
 		}
+
+		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_CHANNEL_SCHEME_UPDATED, "", channel.Id, "", nil)
+		a.Publish(message)
+
 		memberRole = higherScopedMemberRole
 		guestRole = higherScopedGuestRole
 		mlog.Info("Permission scheme deleted.", mlog.String("channel_id", channel.Id), mlog.String("channel_name", channel.Name))
@@ -810,14 +830,23 @@ func (a *App) PatchChannelModerationsForChannel(channel *model.Channel, channelM
 		}
 	}
 
-	return buildChannelModerations(memberRole, guestRole, higherScopedMemberRole, higherScopedGuestRole), nil
+	return buildChannelModerations(channel.Type, memberRole, guestRole, higherScopedMemberRole, higherScopedGuestRole), nil
 }
 
-func buildChannelModerations(memberRole *model.Role, guestRole *model.Role, higherScopedMemberRole *model.Role, higherScopedGuestRole *model.Role) []*model.ChannelModeration {
-	memberPermissions := memberRole.GetChannelModeratedPermissions()
-	guestPermissions := guestRole.GetChannelModeratedPermissions()
-	higherScopedMemberPermissions := higherScopedMemberRole.GetChannelModeratedPermissions()
-	higherScopedGuestPermissions := higherScopedGuestRole.GetChannelModeratedPermissions()
+func buildChannelModerations(channelType string, memberRole *model.Role, guestRole *model.Role, higherScopedMemberRole *model.Role, higherScopedGuestRole *model.Role) []*model.ChannelModeration {
+	var memberPermissions, guestPermissions, higherScopedMemberPermissions, higherScopedGuestPermissions map[string]bool
+	if memberRole != nil {
+		memberPermissions = memberRole.GetChannelModeratedPermissions(channelType)
+	}
+	if guestRole != nil {
+		guestPermissions = guestRole.GetChannelModeratedPermissions(channelType)
+	}
+	if higherScopedMemberRole != nil {
+		higherScopedMemberPermissions = higherScopedMemberRole.GetChannelModeratedPermissions(channelType)
+	}
+	if higherScopedGuestRole != nil {
+		higherScopedGuestPermissions = higherScopedGuestRole.GetChannelModeratedPermissions(channelType)
+	}
 
 	var channelModerations []*model.ChannelModeration
 	for _, permissionKey := range model.CHANNEL_MODERATED_PERMISSIONS {

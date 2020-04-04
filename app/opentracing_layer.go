@@ -3046,7 +3046,7 @@ func (a *OpenTracingAppLayer) DoLogin(w http.ResponseWriter, r *http.Request, us
 	return resultVar0
 }
 
-func (a *OpenTracingAppLayer) DoPermissionsMigrations() *model.AppError {
+func (a *OpenTracingAppLayer) DoPermissionsMigrations() error {
 	origCtx := a.ctx
 	span, newCtx := tracing.StartSpanWithParentByContext(a.ctx, "app.DoPermissionsMigrations")
 
@@ -3059,11 +3059,6 @@ func (a *OpenTracingAppLayer) DoPermissionsMigrations() *model.AppError {
 
 	defer span.Finish()
 	resultVar0 := a.app.DoPermissionsMigrations()
-
-	if resultVar0 != nil {
-		span.LogFields(spanlog.Error(resultVar0))
-		ext.Error.Set(span, true)
-	}
 
 	return resultVar0
 }
@@ -3237,21 +3232,6 @@ func (a *OpenTracingAppLayer) EnableUserAccessToken(token *model.UserAccessToken
 	}
 
 	return resultVar0
-}
-
-func (a *OpenTracingAppLayer) EnsureDiagnosticId() {
-	origCtx := a.ctx
-	span, newCtx := tracing.StartSpanWithParentByContext(a.ctx, "app.EnsureDiagnosticId")
-
-	a.ctx = newCtx
-	a.app.Srv().Store.SetContext(newCtx)
-	defer func() {
-		a.app.Srv().Store.SetContext(origCtx)
-		a.ctx = origCtx
-	}()
-
-	defer span.Finish()
-	a.app.EnsureDiagnosticId()
 }
 
 func (a *OpenTracingAppLayer) EnvironmentConfig() map[string]interface{} {
@@ -7592,7 +7572,7 @@ func (a *OpenTracingAppLayer) GetTeamMember(teamId string, userId string) (*mode
 	return resultVar0, resultVar1
 }
 
-func (a *OpenTracingAppLayer) GetTeamMembers(teamId string, offset int, limit int, restrictions *model.ViewUsersRestrictions) ([]*model.TeamMember, *model.AppError) {
+func (a *OpenTracingAppLayer) GetTeamMembers(teamId string, offset int, limit int, teamMembersGetOptions *model.TeamMembersGetOptions) ([]*model.TeamMember, *model.AppError) {
 	origCtx := a.ctx
 	span, newCtx := tracing.StartSpanWithParentByContext(a.ctx, "app.GetTeamMembers")
 
@@ -7604,7 +7584,7 @@ func (a *OpenTracingAppLayer) GetTeamMembers(teamId string, offset int, limit in
 	}()
 
 	defer span.Finish()
-	resultVar0, resultVar1 := a.app.GetTeamMembers(teamId, offset, limit, restrictions)
+	resultVar0, resultVar1 := a.app.GetTeamMembers(teamId, offset, limit, teamMembersGetOptions)
 
 	if resultVar1 != nil {
 		span.LogFields(spanlog.Error(resultVar1))
@@ -11547,7 +11527,7 @@ func (a *OpenTracingAppLayer) SaveUserTermsOfService(userId string, termsOfServi
 	return resultVar0
 }
 
-func (a *OpenTracingAppLayer) SchemesIterator(batchSize int) func() []*model.Scheme {
+func (a *OpenTracingAppLayer) SchemesIterator(scope string, batchSize int) func() []*model.Scheme {
 	origCtx := a.ctx
 	span, newCtx := tracing.StartSpanWithParentByContext(a.ctx, "app.SchemesIterator")
 
@@ -11559,7 +11539,7 @@ func (a *OpenTracingAppLayer) SchemesIterator(batchSize int) func() []*model.Sch
 	}()
 
 	defer span.Finish()
-	resultVar0 := a.app.SchemesIterator(batchSize)
+	resultVar0 := a.app.SchemesIterator(scope, batchSize)
 
 	return resultVar0
 }

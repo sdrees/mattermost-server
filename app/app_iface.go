@@ -102,7 +102,7 @@ type AppIface interface {
 	// Notifies cluster peers through config change.
 	DisablePlugin(id string) *model.AppError
 	// DoPermissionsMigrations execute all the permissions migrations need by the current version.
-	DoPermissionsMigrations() *model.AppError
+	DoPermissionsMigrations() error
 	// EnablePlugin will set the config for an installed plugin to enabled, triggering asynchronous
 	// activation if inactive anywhere in the cluster.
 	// Notifies cluster peers through config change.
@@ -411,7 +411,6 @@ type AppIface interface {
 	DoUploadFileExpectModification(now time.Time, rawTeamId string, rawChannelId string, rawUserId string, rawFilename string, data []byte) (*model.FileInfo, []byte, *model.AppError)
 	DownloadFromURL(downloadURL string) ([]byte, error)
 	EnableUserAccessToken(token *model.UserAccessToken) *model.AppError
-	EnsureDiagnosticId()
 	EnvironmentConfig() map[string]interface{}
 	// @openTracingParams args
 	ExecuteCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError)
@@ -595,7 +594,7 @@ type AppIface interface {
 	GetTeamIcon(team *model.Team) ([]byte, *model.AppError)
 	GetTeamIdFromQuery(query url.Values) (string, *model.AppError)
 	GetTeamMember(teamId, userId string) (*model.TeamMember, *model.AppError)
-	GetTeamMembers(teamId string, offset int, limit int, restrictions *model.ViewUsersRestrictions) ([]*model.TeamMember, *model.AppError)
+	GetTeamMembers(teamId string, offset int, limit int, teamMembersGetOptions *model.TeamMembersGetOptions) ([]*model.TeamMember, *model.AppError)
 	GetTeamMembersByIds(teamId string, userIds []string, restrictions *model.ViewUsersRestrictions) ([]*model.TeamMember, *model.AppError)
 	GetTeamMembersForUser(userId string) ([]*model.TeamMember, *model.AppError)
 	GetTeamMembersForUserWithPagination(userId string, page, perPage int) ([]*model.TeamMember, *model.AppError)
@@ -782,7 +781,7 @@ type AppIface interface {
 	SaveLicense(licenseBytes []byte) (*model.License, *model.AppError)
 	SaveReactionForPost(reaction *model.Reaction) (*model.Reaction, *model.AppError)
 	SaveUserTermsOfService(userId, termsOfServiceId string, accepted bool) *model.AppError
-	SchemesIterator(batchSize int) func() []*model.Scheme
+	SchemesIterator(scope string, batchSize int) func() []*model.Scheme
 	SearchArchivedChannels(teamId string, term string, userId string) (*model.ChannelList, *model.AppError)
 	SearchChannels(teamId string, term string) (*model.ChannelList, *model.AppError)
 	SearchChannelsForUser(userId, teamId, term string) (*model.ChannelList, *model.AppError)
