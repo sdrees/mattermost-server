@@ -21,7 +21,11 @@ func TestUserStore(t *testing.T) {
 
 func TestUserStoreCache(t *testing.T) {
 	fakeUserIds := []string{"123"}
-	fakeUser := []*model.User{{Id: "123", AuthData: model.NewString("")}}
+	fakeUser := []*model.User{{
+		Id:          "123",
+		AuthData:    model.NewString("authData"),
+		AuthService: "authService",
+	}}
 
 	t.Run("first call not cached, second cached and returning same data", func(t *testing.T) {
 		mockStore := getMockStore()
@@ -97,6 +101,8 @@ func TestUserStoreCache(t *testing.T) {
 		cachedUsers, err = cachedStore.User().GetProfileByIds(fakeUserIds, &store.UserGetByIdsOpts{}, true)
 		require.Nil(t, err)
 		for i := 0; i < len(storedUsers); i++ {
+			storedUsers[i].Props = model.StringMap{}
+			storedUsers[i].Timezone = model.StringMap{}
 			assert.Equal(t, storedUsers[i], cachedUsers[i])
 			if storedUsers[i] == cachedUsers[i] {
 				assert.Fail(t, "should be different pointers")
@@ -181,7 +187,11 @@ func TestUserStoreProfilesInChannelCache(t *testing.T) {
 
 func TestUserStoreGetCache(t *testing.T) {
 	fakeUserId := "123"
-	fakeUser := &model.User{Id: "123", AuthData: model.NewString("")}
+	fakeUser := &model.User{
+		Id:          "123",
+		AuthData:    model.NewString("authData"),
+		AuthService: "authService",
+	}
 	t.Run("first call not cached, second cached and returning same data", func(t *testing.T) {
 		mockStore := getMockStore()
 		mockCacheProvider := getMockCacheProvider()
@@ -233,6 +243,8 @@ func TestUserStoreGetCache(t *testing.T) {
 		cachedUser.NotifyProps["key"] = "othervalue"
 		assert.NotEqual(t, storedUser, cachedUser)
 
+		storedUser.Props = model.StringMap{}
+		storedUser.Timezone = model.StringMap{}
 		cachedUser, err = cachedStore.User().Get(fakeUserId)
 		require.Nil(t, err)
 		assert.Equal(t, storedUser, cachedUser)
