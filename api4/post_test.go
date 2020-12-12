@@ -5,6 +5,7 @@ package api4
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/mattermost/mattermost-server/v5/app"
 	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v5/plugin/plugintest/mock"
+	"github.com/mattermost/mattermost-server/v5/store/storetest/mocks"
 	"github.com/mattermost/mattermost-server/v5/utils"
 	"github.com/mattermost/mattermost-server/v5/utils/testutils"
 )
@@ -1354,6 +1357,26 @@ func TestGetFlaggedPostsForUser(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.GetFlaggedPostsForUser(user.Id, 0, 10)
 	CheckNoError(t, resp)
+
+	mockStore := mocks.Store{}
+	mockPostStore := mocks.PostStore{}
+	mockPostStore.On("GetFlaggedPosts", mock.AnythingOfType("string"), mock.AnythingOfType("int"), mock.AnythingOfType("int")).Return(nil, errors.New("some-error"))
+	mockPostStore.On("ClearCaches").Return()
+	mockStore.On("Team").Return(th.App.Srv().Store.Team())
+	mockStore.On("Channel").Return(th.App.Srv().Store.Channel())
+	mockStore.On("User").Return(th.App.Srv().Store.User())
+	mockStore.On("Scheme").Return(th.App.Srv().Store.Scheme())
+	mockStore.On("Post").Return(&mockPostStore)
+	mockStore.On("FileInfo").Return(th.App.Srv().Store.FileInfo())
+	mockStore.On("Webhook").Return(th.App.Srv().Store.Webhook())
+	mockStore.On("System").Return(th.App.Srv().Store.System())
+	mockStore.On("License").Return(th.App.Srv().Store.License())
+	mockStore.On("Role").Return(th.App.Srv().Store.Role())
+	mockStore.On("Close").Return(nil)
+	th.App.Srv().Store = &mockStore
+
+	_, resp = th.SystemAdminClient.GetFlaggedPostsForUser(user.Id, 0, 10)
+	CheckInternalErrorStatus(t, resp)
 }
 
 func TestGetPostsBefore(t *testing.T) {
@@ -1968,6 +1991,56 @@ func TestDeletePost(t *testing.T) {
 	status, resp := th.SystemAdminClient.DeletePost(post.Id)
 	require.True(t, status, "post should return status OK")
 	CheckNoError(t, resp)
+}
+
+func TestDeletePostMessage(t *testing.T) {
+	th := Setup(t).InitBasic()
+	th.LinkUserToTeam(th.SystemAdminUser, th.BasicTeam)
+	th.App.AddUserToChannel(th.SystemAdminUser, th.BasicChannel)
+
+	defer th.TearDown()
+
+	testCases := []struct {
+		description string
+		client      *model.Client4
+		delete_by   interface{}
+	}{
+		{"Do not send delete_by to regular user", th.Client, nil},
+		{"Send delete_by to system admin user", th.SystemAdminClient, th.SystemAdminUser.Id},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			wsClient, err := th.CreateWebSocketClientWithClient(tc.client)
+			require.Nil(t, err)
+			defer wsClient.Close()
+
+			wsClient.Listen()
+
+			post := th.CreatePost()
+
+			status, resp := th.SystemAdminClient.DeletePost(post.Id)
+			require.True(t, status, "post should return status OK")
+			CheckNoError(t, resp)
+
+			timeout := time.After(5 * time.Second)
+
+			for {
+				select {
+				case ev := <-wsClient.EventChannel:
+					if ev.EventType() == model.WEBSOCKET_EVENT_POST_DELETED {
+						assert.Equal(t, tc.delete_by, ev.GetData()["delete_by"])
+						return
+					}
+				case <-timeout:
+					// We just skip the test instead of failing because waiting for more than 5 seconds
+					// to get a response does not make sense, and it will unncessarily slow down
+					// the tests further in an already congested CI environment.
+					t.Skip("timed out waiting for event")
+				}
+			}
+		})
+	}
 }
 
 func TestGetPostThread(t *testing.T) {

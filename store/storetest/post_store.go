@@ -5,7 +5,6 @@ package storetest
 
 import (
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"testing"
@@ -18,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostStore(t *testing.T, ss store.Store, s SqlSupplier) {
+func TestPostStore(t *testing.T, ss store.Store, s SqlStore) {
 	t.Run("SaveMultiple", func(t *testing.T) { testPostStoreSaveMultiple(t, ss) })
 	t.Run("Save", func(t *testing.T) { testPostStoreSave(t, ss) })
 	t.Run("SaveAndUpdateChannelMsgCounts", func(t *testing.T) { testPostStoreSaveChannelMsgCounts(t, ss) })
@@ -898,12 +897,12 @@ func testPostStoreGetPostsBeforeAfter(t *testing.T, ss store.Store) {
 			postList, err := ss.Post().GetPostsAfter(model.GetPostsOptions{ChannelId: channelId, PostId: posts[0].Id, Page: 0, PerPage: -1})
 			assert.Nil(t, postList)
 			assert.Error(t, err)
-			assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+			assert.IsType(t, &store.ErrInvalidInput{}, err)
 
 			postList, err = ss.Post().GetPostsAfter(model.GetPostsOptions{ChannelId: channelId, PostId: posts[0].Id, Page: -1, PerPage: 10})
 			assert.Nil(t, postList)
 			assert.Error(t, err)
-			assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+			assert.IsType(t, &store.ErrInvalidInput{}, err)
 		})
 
 		t.Run("should not return anything before the first post", func(t *testing.T) {
@@ -1692,7 +1691,7 @@ func testPostCountsByDay(t *testing.T, ss store.Store) {
 	assert.Equal(t, int64(6), r2)
 }
 
-func testPostStoreGetFlaggedPostsForTeam(t *testing.T, ss store.Store, s SqlSupplier) {
+func testPostStoreGetFlaggedPostsForTeam(t *testing.T, ss store.Store, s SqlStore) {
 	c1 := &model.Channel{}
 	c1.TeamId = model.NewId()
 	c1.DisplayName = "Channel1"
@@ -2610,7 +2609,7 @@ func testPostStoreGetRepliesForExport(t *testing.T, ss store.Store) {
 
 }
 
-func testPostStoreGetDirectPostParentsForExportAfter(t *testing.T, ss store.Store, s SqlSupplier) {
+func testPostStoreGetDirectPostParentsForExportAfter(t *testing.T, ss store.Store, s SqlStore) {
 	teamId := model.NewId()
 
 	o1 := model.Channel{}
@@ -2655,8 +2654,8 @@ func testPostStoreGetDirectPostParentsForExportAfter(t *testing.T, ss store.Stor
 	p1, nErr = ss.Post().Save(p1)
 	require.Nil(t, nErr)
 
-	r1, err := ss.Post().GetDirectPostParentsForExportAfter(10000, strings.Repeat("0", 26))
-	assert.Nil(t, err)
+	r1, nErr := ss.Post().GetDirectPostParentsForExportAfter(10000, strings.Repeat("0", 26))
+	assert.Nil(t, nErr)
 
 	assert.Equal(t, p1.Message, r1[0].Message)
 
@@ -2664,7 +2663,7 @@ func testPostStoreGetDirectPostParentsForExportAfter(t *testing.T, ss store.Stor
 	s.GetMaster().Exec("TRUNCATE Channels")
 }
 
-func testPostStoreGetDirectPostParentsForExportAfterDeleted(t *testing.T, ss store.Store, s SqlSupplier) {
+func testPostStoreGetDirectPostParentsForExportAfterDeleted(t *testing.T, ss store.Store, s SqlStore) {
 	teamId := model.NewId()
 
 	o1 := model.Channel{}
@@ -2721,8 +2720,8 @@ func testPostStoreGetDirectPostParentsForExportAfterDeleted(t *testing.T, ss sto
 	_, nErr = ss.Post().Update(o1a, p1)
 	require.Nil(t, nErr)
 
-	r1, err := ss.Post().GetDirectPostParentsForExportAfter(10000, strings.Repeat("0", 26))
-	assert.Nil(t, err)
+	r1, nErr := ss.Post().GetDirectPostParentsForExportAfter(10000, strings.Repeat("0", 26))
+	assert.Nil(t, nErr)
 
 	assert.Equal(t, 0, len(r1))
 
@@ -2730,7 +2729,7 @@ func testPostStoreGetDirectPostParentsForExportAfterDeleted(t *testing.T, ss sto
 	s.GetMaster().Exec("TRUNCATE Channels")
 }
 
-func testPostStoreGetDirectPostParentsForExportAfterBatched(t *testing.T, ss store.Store, s SqlSupplier) {
+func testPostStoreGetDirectPostParentsForExportAfterBatched(t *testing.T, ss store.Store, s SqlStore) {
 	teamId := model.NewId()
 
 	o1 := model.Channel{}

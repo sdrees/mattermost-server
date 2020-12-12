@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost-server/v5/mlog"
 	"github.com/mattermost/mattermost-server/v5/services/cache"
 
 	"github.com/mattermost/mattermost-server/v5/model"
@@ -22,7 +23,7 @@ var mainHelper *testlib.MainHelper
 func getMockCacheProvider() cache.Provider {
 	mockCacheProvider := cachemocks.Provider{}
 	mockCacheProvider.On("NewCache", mock.Anything).
-		Return(cache.NewLRU(&cache.LRUOptions{Size: 128}))
+		Return(cache.NewLRU(cache.LRUOptions{Size: 128}), nil)
 	return &mockCacheProvider
 }
 
@@ -153,6 +154,7 @@ func getMockStore() *mocks.Store {
 }
 
 func TestMain(m *testing.M) {
+	mlog.DisableZap()
 	mainHelper = testlib.NewMainHelperWithOptions(nil)
 	defer mainHelper.Close()
 

@@ -96,7 +96,7 @@ func (s *Server) SaveLicense(licenseBytes []byte) (*model.License, *model.AppErr
 		case errors.As(nErr, &appErr):
 			return nil, appErr
 		default:
-			return nil, model.NewAppError("addLicense", "api.license.add_license.save.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("addLicense", "api.license.add_license.save.app_error", nil, nErr.Error(), http.StatusInternalServerError)
 		}
 	}
 
@@ -223,7 +223,7 @@ func (s *Server) GetSanitizedClientLicense() map[string]string {
 	return sanitizedLicense
 }
 
-// RequestTrialLicense request a trial license from the mattermost offical license server
+// RequestTrialLicense request a trial license from the mattermost official license server
 func (s *Server) RequestTrialLicense(trialRequest *model.TrialLicenseRequest) *model.AppError {
 	resp, err := http.Post(requestTrialURL, "application/json", bytes.NewBuffer([]byte(trialRequest.ToJson())))
 	if err != nil {

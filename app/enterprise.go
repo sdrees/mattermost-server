@@ -90,10 +90,34 @@ func RegisterJobsBleveIndexerInterface(f func(*Server) tjobs.IndexerJobInterface
 	jobsBleveIndexerInterface = f
 }
 
+var jobsActiveUsersInterface func(*App) tjobs.ActiveUsersJobInterface
+
+func RegisterJobsActiveUsersInterface(f func(*App) tjobs.ActiveUsersJobInterface) {
+	jobsActiveUsersInterface = f
+}
+
+var jobsCloudInterface func(*Server) ejobs.CloudJobInterface
+
+func RegisterJobsCloudInterface(f func(*Server) ejobs.CloudJobInterface) {
+	jobsCloudInterface = f
+}
+
 var jobsExpiryNotifyInterface func(*App) tjobs.ExpiryNotifyJobInterface
 
 func RegisterJobsExpiryNotifyJobInterface(f func(*App) tjobs.ExpiryNotifyJobInterface) {
 	jobsExpiryNotifyInterface = f
+}
+
+var jobsImportProcessInterface func(*App) tjobs.ImportProcessInterface
+
+func RegisterJobsImportProcessInterface(f func(*App) tjobs.ImportProcessInterface) {
+	jobsImportProcessInterface = f
+}
+
+var productNoticesJobInterface func(*App) tjobs.ProductNoticesJobInterface
+
+func RegisterProductNoticesJobInterface(f func(*App) tjobs.ProductNoticesJobInterface) {
+	productNoticesJobInterface = f
 }
 
 var ldapInterface func(*App) einterfaces.LdapInterface
@@ -108,16 +132,16 @@ func RegisterMessageExportInterface(f func(*Server) einterfaces.MessageExportInt
 	messageExportInterface = f
 }
 
+var cloudInterface func(*App) einterfaces.CloudInterface
+
+func RegisterCloudInterface(f func(*App) einterfaces.CloudInterface) {
+	cloudInterface = f
+}
+
 var metricsInterface func(*Server) einterfaces.MetricsInterface
 
 func RegisterMetricsInterface(f func(*Server) einterfaces.MetricsInterface) {
 	metricsInterface = f
-}
-
-var samlInterface func(*App) einterfaces.SamlInterface
-
-func RegisterSamlInterface(f func(*App) einterfaces.SamlInterface) {
-	samlInterface = f
 }
 
 var samlInterfaceNew func(*App) einterfaces.SamlInterface
@@ -163,14 +187,9 @@ func (a *App) initEnterprise() {
 	if notificationInterface != nil {
 		a.srv.Notification = notificationInterface(a)
 	}
-	if samlInterface != nil {
-		if *a.Config().ExperimentalSettings.UseNewSAMLLibrary && samlInterfaceNew != nil {
-			mlog.Debug("Loading new SAML2 library")
-			a.srv.Saml = samlInterfaceNew(a)
-		} else {
-			mlog.Debug("Loading original SAML library")
-			a.srv.Saml = samlInterface(a)
-		}
+	if samlInterfaceNew != nil {
+		mlog.Debug("Loading SAML2 library")
+		a.srv.Saml = samlInterfaceNew(a)
 		if err := a.srv.Saml.ConfigureSP(); err != nil {
 			mlog.Error("An error occurred while configuring SAML Service Provider", mlog.Err(err))
 		}
@@ -179,5 +198,8 @@ func (a *App) initEnterprise() {
 				mlog.Error("An error occurred while configuring SAML Service Provider", mlog.Err(err))
 			}
 		})
+	}
+	if cloudInterface != nil {
+		a.srv.Cloud = cloudInterface(a)
 	}
 }

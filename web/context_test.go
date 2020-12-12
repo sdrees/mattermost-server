@@ -32,6 +32,21 @@ func TestRequireHookId(t *testing.T) {
 	})
 }
 
+func TestCloudKeyRequired(t *testing.T) {
+	th := SetupWithStoreMock(t)
+	defer th.TearDown()
+
+	th.App.Srv().SetLicense(model.NewTestLicense("cloud"))
+
+	c := &Context{
+		App: th.App,
+	}
+
+	c.CloudKeyRequired()
+
+	assert.Equal(t, c.Err.Id, "api.context.session_expired.app_error")
+}
+
 func TestMfaRequired(t *testing.T) {
 	th := SetupWithStoreMock(t)
 	defer th.TearDown()
@@ -43,6 +58,7 @@ func TestMfaRequired(t *testing.T) {
 	mockPostStore := mocks.PostStore{}
 	mockPostStore.On("GetMaxPostSize").Return(65535, nil)
 	mockSystemStore := mocks.SystemStore{}
+	mockSystemStore.On("GetByName", "UpgradedFromTE").Return(&model.System{Name: "UpgradedFromTE", Value: "false"}, nil)
 	mockSystemStore.On("GetByName", "InstallationDate").Return(&model.System{Name: "InstallationDate", Value: "10"}, nil)
 
 	mockStore.On("User").Return(&mockUserStore)
@@ -54,6 +70,8 @@ func TestMfaRequired(t *testing.T) {
 	th.App.SetSession(&model.Session{Id: "abc", UserId: "userid"})
 
 	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.AnnouncementSettings.UserNoticesEnabled = false
+		*cfg.AnnouncementSettings.AdminNoticesEnabled = false
 		*cfg.ServiceSettings.EnableMultifactorAuthentication = true
 		*cfg.ServiceSettings.EnforceMultifactorAuthentication = true
 	})

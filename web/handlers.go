@@ -72,6 +72,7 @@ type Handler struct {
 	HandleFunc          func(*Context, http.ResponseWriter, *http.Request)
 	HandlerName         string
 	RequireSession      bool
+	RequireCloudKey     bool
 	TrustRequester      bool
 	RequireMfa          bool
 	IsStatic            bool
@@ -162,12 +163,18 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Strict-Transport-Security", fmt.Sprintf("max-age=%d", *c.App.Config().ServiceSettings.TLSStrictTransportMaxAge))
 	}
 
+	cloudCSP := ""
+	if c.App.Srv().License() != nil && *c.App.Srv().License().Features.Cloud {
+		cloudCSP = " js.stripe.com/v3"
+	}
+
 	if h.IsStatic {
 		// Instruct the browser not to display us in an iframe unless is the same origin for anti-clickjacking
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		// Set content security policy. This is also specified in the root.html of the webapp in a meta tag.
 		w.Header().Set("Content-Security-Policy", fmt.Sprintf(
-			"frame-ancestors 'self'; script-src 'self' cdn.rudderlabs.com%s",
+			"frame-ancestors 'self'; script-src 'self' cdn.rudderlabs.com%s%s",
+			cloudCSP,
 			h.cspShaDirective,
 		))
 	} else {
@@ -181,7 +188,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	token, tokenLocation := app.ParseAuthTokenFromRequest(r)
 
-	if len(token) != 0 {
+	if len(token) != 0 && tokenLocation != app.TokenLocationCloudHeader {
 		session, err := c.App.GetSession(token)
 		if err != nil {
 			c.Log.Info("Invalid session", mlog.Err(err))
@@ -203,6 +210,15 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.checkCSRFToken(c, r, token, tokenLocation, session)
+	} else if len(token) != 0 && c.App.Srv().License() != nil && *c.App.Srv().License().Features.Cloud && tokenLocation == app.TokenLocationCloudHeader {
+		// Check to see if this provided token matches our CWS Token
+		session, err := c.App.GetCloudSession(token)
+		if err != nil {
+			c.Log.Warn("Invalid CWS token", mlog.Err(err))
+			c.Err = err
+		} else {
+			c.App.SetSession(session)
+		}
 	}
 
 	c.Log = c.App.Log().With(
@@ -223,6 +239,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if c.Err == nil && h.DisableWhenBusy && c.App.Srv().Busy.IsBusy() {
 		c.SetServerBusyError()
+	}
+
+	if c.Err == nil && h.RequireCloudKey {
+		c.CloudKeyRequired()
 	}
 
 	if c.Err == nil && h.IsLocal {

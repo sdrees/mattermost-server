@@ -28,7 +28,7 @@ func (a *App) createDefaultChannelMemberships(since int64, channelID *string) er
 		}
 
 		tmem, err := a.GetTeamMember(channel.TeamId, userChannel.UserID)
-		if err != nil && err.Id != "store.sql_team.get_member.missing.app_error" {
+		if err != nil && err.Id != "app.team.get_member.missing.app_error" {
 			return err
 		}
 
@@ -195,7 +195,7 @@ func (a *App) deleteGroupConstrainedChannelMemberships(channelID *string) error 
 func (a *App) SyncSyncableRoles(syncableID string, syncableType model.GroupSyncableType) *model.AppError {
 	permittedAdmins, err := a.Srv().Store.Group().PermittedSyncableAdmins(syncableID, syncableType)
 	if err != nil {
-		return err
+		return model.NewAppError("SyncSyncableRoles", "app.select_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	a.Log().Info(
@@ -204,23 +204,22 @@ func (a *App) SyncSyncableRoles(syncableID string, syncableType model.GroupSynca
 		mlog.Any("permitted_admins", permittedAdmins),
 	)
 
-	var updateFunc func(string, []string) *model.AppError
-
 	switch syncableType {
 	case model.GroupSyncableTypeTeam:
-		updateFunc = a.Srv().Store.Team().UpdateMembersRole
+		nErr := a.Srv().Store.Team().UpdateMembersRole(syncableID, permittedAdmins)
+		if nErr != nil {
+			return model.NewAppError("App.SyncSyncableRoles", "app.update_error", nil, nErr.Error(), http.StatusInternalServerError)
+		}
+		return nil
 	case model.GroupSyncableTypeChannel:
-		updateFunc = a.Srv().Store.Channel().UpdateMembersRole
+		nErr := a.Srv().Store.Channel().UpdateMembersRole(syncableID, permittedAdmins)
+		if nErr != nil {
+			return model.NewAppError("App.SyncSyncableRoles", "app.update_error", nil, nErr.Error(), http.StatusInternalServerError)
+		}
+		return nil
 	default:
 		return model.NewAppError("App.SyncSyncableRoles", "groups.unsupported_syncable_type", map[string]interface{}{"Value": syncableType}, "", http.StatusInternalServerError)
 	}
-
-	err = updateFunc(syncableID, permittedAdmins)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // SyncRolesAndMembership updates the SchemeAdmin status and membership of all of the members of the given

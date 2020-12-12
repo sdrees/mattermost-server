@@ -4,6 +4,8 @@
 package searchlayer
 
 import (
+	"sync/atomic"
+
 	"github.com/mattermost/mattermost-server/v5/mlog"
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/services/searchengine"
@@ -17,15 +19,15 @@ type SearchStore struct {
 	team         *SearchTeamStore
 	channel      *SearchChannelStore
 	post         *SearchPostStore
-	config       *model.Config
+	configValue  atomic.Value
 }
 
 func NewSearchLayer(baseStore store.Store, searchEngine *searchengine.Broker, cfg *model.Config) *SearchStore {
 	searchStore := &SearchStore{
 		Store:        baseStore,
 		searchEngine: searchEngine,
-		config:       cfg,
 	}
+	searchStore.configValue.Store(cfg)
 	searchStore.channel = &SearchChannelStore{ChannelStore: baseStore.Channel(), rootStore: searchStore}
 	searchStore.post = &SearchPostStore{PostStore: baseStore.Post(), rootStore: searchStore}
 	searchStore.team = &SearchTeamStore{TeamStore: baseStore.Team(), rootStore: searchStore}
@@ -35,7 +37,11 @@ func NewSearchLayer(baseStore store.Store, searchEngine *searchengine.Broker, cf
 }
 
 func (s *SearchStore) UpdateConfig(cfg *model.Config) {
-	s.config = cfg
+	s.configValue.Store(cfg)
+}
+
+func (s *SearchStore) getConfig() *model.Config {
+	return s.configValue.Load().(*model.Config)
 }
 
 func (s *SearchStore) Channel() store.ChannelStore {
@@ -66,9 +72,9 @@ func (s *SearchStore) indexUser(user *model.User) {
 	for _, engine := range s.searchEngine.GetActiveEngines() {
 		if engine.IsIndexingEnabled() {
 			runIndexFn(engine, func(engineCopy searchengine.SearchEngineInterface) {
-				userTeams, err := s.Team().GetTeamsByUserId(user.Id)
-				if err != nil {
-					mlog.Error("Encountered error indexing user", mlog.String("user_id", user.Id), mlog.String("search_engine", engineCopy.GetName()), mlog.Err(err))
+				userTeams, nErr := s.Team().GetTeamsByUserId(user.Id)
+				if nErr != nil {
+					mlog.Error("Encountered error indexing user", mlog.String("user_id", user.Id), mlog.String("search_engine", engineCopy.GetName()), mlog.Err(nErr))
 					return
 				}
 

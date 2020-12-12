@@ -25,6 +25,10 @@ type Workers struct {
 	Plugins                  model.Worker
 	BleveIndexing            model.Worker
 	ExpiryNotify             model.Worker
+	ProductNotices           model.Worker
+	ActiveUsers              model.Worker
+	ImportProcess            model.Worker
+	Cloud                    model.Worker
 
 	listenerId string
 }
@@ -70,6 +74,23 @@ func (srv *JobServer) InitWorkers() *Workers {
 	if expiryNotifyInterface := srv.ExpiryNotify; expiryNotifyInterface != nil {
 		workers.ExpiryNotify = expiryNotifyInterface.MakeWorker()
 	}
+
+	if activeUsersInterface := srv.ActiveUsers; activeUsersInterface != nil {
+		workers.ActiveUsers = activeUsersInterface.MakeWorker()
+	}
+
+	if productNoticesInterface := srv.ProductNotices; productNoticesInterface != nil {
+		workers.ProductNotices = productNoticesInterface.MakeWorker()
+	}
+
+	if importProcessInterface := srv.ImportProcess; importProcessInterface != nil {
+		workers.ImportProcess = importProcessInterface.MakeWorker()
+	}
+
+	if cloudInterface := srv.Cloud; cloudInterface != nil {
+		workers.Cloud = cloudInterface.MakeWorker()
+	}
+
 	return workers
 }
 
@@ -111,6 +132,22 @@ func (workers *Workers) Start() *Workers {
 
 		if workers.ExpiryNotify != nil {
 			go workers.ExpiryNotify.Run()
+		}
+
+		if workers.ActiveUsers != nil {
+			go workers.ActiveUsers.Run()
+		}
+
+		if workers.ProductNotices != nil {
+			go workers.ProductNotices.Run()
+		}
+
+		if workers.ImportProcess != nil {
+			go workers.ImportProcess.Run()
+		}
+
+		if workers.Cloud != nil {
+			go workers.Cloud.Run()
 		}
 
 		go workers.Watcher.Start()
@@ -212,6 +249,22 @@ func (workers *Workers) Stop() *Workers {
 
 	if workers.ExpiryNotify != nil {
 		workers.ExpiryNotify.Stop()
+	}
+
+	if workers.ActiveUsers != nil {
+		workers.ActiveUsers.Stop()
+	}
+
+	if workers.ProductNotices != nil {
+		workers.ProductNotices.Stop()
+	}
+
+	if workers.ImportProcess != nil {
+		workers.ImportProcess.Stop()
+	}
+
+	if workers.Cloud != nil {
+		workers.Cloud.Stop()
 	}
 
 	mlog.Info("Stopped workers")

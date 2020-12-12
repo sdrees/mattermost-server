@@ -24,11 +24,11 @@ func init() {
 	app.RegisterCommandProvider(&groupmsgProvider{})
 }
 
-func (me *groupmsgProvider) GetTrigger() string {
+func (*groupmsgProvider) GetTrigger() string {
 	return CMD_GROUPMSG
 }
 
-func (me *groupmsgProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
+func (*groupmsgProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
 	return &model.Command{
 		Trigger:          CMD_GROUPMSG,
 		AutoComplete:     true,
@@ -38,7 +38,7 @@ func (me *groupmsgProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *mode
 	}
 }
 
-func (me *groupmsgProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
+func (*groupmsgProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
 	targetUsers := map[string]*model.User{}
 	targetUsersSlice := []string{args.UserId}
 	invalidUsernames := []string{}
@@ -48,8 +48,8 @@ func (me *groupmsgProvider) DoCommand(a *app.App, args *model.CommandArgs, messa
 	for _, username := range users {
 		username = strings.TrimSpace(username)
 		username = strings.TrimPrefix(username, "@")
-		targetUser, err := a.Srv().Store.User().GetByUsername(username)
-		if err != nil {
+		targetUser, nErr := a.Srv().Store.User().GetByUsername(username)
+		if nErr != nil {
 			invalidUsernames = append(invalidUsernames, username)
 			continue
 		}

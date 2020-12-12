@@ -29,15 +29,15 @@ func init() {
 	app.RegisterCommandProvider(&KickProvider{})
 }
 
-func (me *RemoveProvider) GetTrigger() string {
+func (*RemoveProvider) GetTrigger() string {
 	return CMD_REMOVE
 }
 
-func (me *KickProvider) GetTrigger() string {
+func (*KickProvider) GetTrigger() string {
 	return CMD_KICK
 }
 
-func (me *RemoveProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
+func (*RemoveProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
 	return &model.Command{
 		Trigger:          CMD_REMOVE,
 		AutoComplete:     true,
@@ -47,7 +47,7 @@ func (me *RemoveProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.
 	}
 }
 
-func (me *KickProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
+func (*KickProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Command {
 	return &model.Command{
 		Trigger:          CMD_KICK,
 		AutoComplete:     true,
@@ -57,11 +57,11 @@ func (me *KickProvider) GetCommand(a *app.App, T goi18n.TranslateFunc) *model.Co
 	}
 }
 
-func (me *RemoveProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
+func (*RemoveProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
 	return doCommand(a, args, message)
 }
 
-func (me *KickProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
+func (*KickProvider) DoCommand(a *app.App, args *model.CommandArgs, message string) *model.CommandResponse {
 	return doCommand(a, args, message)
 }
 
@@ -108,9 +108,9 @@ func doCommand(a *app.App, args *model.CommandArgs, message string) *model.Comma
 	targetUsername = strings.SplitN(message, " ", 2)[0]
 	targetUsername = strings.TrimPrefix(targetUsername, "@")
 
-	userProfile, err := a.Srv().Store.User().GetByUsername(targetUsername)
-	if err != nil {
-		mlog.Error(err.Error())
+	userProfile, nErr := a.Srv().Store.User().GetByUsername(targetUsername)
+	if nErr != nil {
+		mlog.Error(nErr.Error())
 		return &model.CommandResponse{
 			Text:         args.T("api.command_remove.missing.app_error"),
 			ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
