@@ -3,7 +3,9 @@
 
 package sqlstore
 
-import "context"
+import (
+	"context"
+)
 
 // storeContextKey is the base type for all context keys for the store.
 type storeContextKey string
@@ -16,8 +18,8 @@ const (
 	useMaster contextValue = "useMaster"
 )
 
-// withMaster adds the context value that master DB should be selected for this request.
-func withMaster(ctx context.Context) context.Context {
+// WithMaster adds the context value that master DB should be selected for this request.
+func WithMaster(ctx context.Context) context.Context {
 	return context.WithValue(ctx, storeContextKey(useMaster), true)
 }
 
