@@ -17,13 +17,21 @@ const (
 
 var MockCWS string
 
+type BillingScheme string
+
+const (
+	BillingSchemePerSeat = BillingScheme("per_seat")
+	BillingSchemeFlatFee = BillingScheme("flat_fee")
+)
+
 // Product model represents a product on the cloud system.
 type Product struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	PricePerSeat float64  `json:"price_per_seat"`
-	AddOns       []*AddOn `json:"add_ons"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Description   string        `json:"description"`
+	PricePerSeat  float64       `json:"price_per_seat"`
+	AddOns        []*AddOn      `json:"add_ons"`
+	BillingScheme BillingScheme `json:"billing_scheme"`
 }
 
 // AddOn represents an addon to a product.
@@ -155,4 +163,8 @@ type SubscriptionStats struct {
 	RemainingSeats int    `json:"remaining_seats"`
 	IsPaidTier     string `json:"is_paid_tier"`
 	IsFreeTrial    string `json:"is_free_trial"`
+}
+
+type SubscriptionChange struct {
+	ProductID string `json:"product_id"`
 }

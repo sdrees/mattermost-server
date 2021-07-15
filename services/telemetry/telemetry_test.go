@@ -52,7 +52,12 @@ func initializeMocks(cfg *model.Config) (*mocks.ServerIface, *storeMocks.Store, 
 		os.RemoveAll(webappPluginDir)
 	}
 	pluginsAPIMock := &plugintest.API{}
-	pluginEnv, _ := plugin.NewEnvironment(func(m *model.Manifest) plugin.API { return pluginsAPIMock }, pluginDir, webappPluginDir, mlog.NewLogger(&mlog.LoggerConfiguration{}), nil)
+	pluginEnv, _ := plugin.NewEnvironment(
+		func(m *model.Manifest) plugin.API { return pluginsAPIMock },
+		nil,
+		pluginDir, webappPluginDir,
+		mlog.NewLogger(&mlog.LoggerConfiguration{}),
+		nil)
 	serverIfaceMock.On("GetPluginsEnvironment").Return(pluginEnv, nil)
 
 	serverIfaceMock.On("License").Return(model.NewTestLicense(), nil)
@@ -369,6 +374,7 @@ func TestRudderTelemetry(t *testing.T) {
 			TrackConfigExperimental,
 			TrackConfigAnalytics,
 			TrackConfigPlugin,
+			TrackFeatureFlags,
 			TrackActivity,
 			TrackServer,
 			TrackConfigMessageExport,
@@ -411,6 +417,7 @@ func TestRudderTelemetry(t *testing.T) {
 			TrackConfigExperimental,
 			TrackConfigAnalytics,
 			TrackConfigPlugin,
+			TrackFeatureFlags,
 			TrackActivity,
 			TrackServer,
 			TrackConfigMessageExport,

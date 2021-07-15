@@ -66,6 +66,7 @@ const (
 	TrackConfigImageProxy        = "config_image_proxy"
 	TrackConfigBleve             = "config_bleve"
 	TrackConfigExport            = "config_export"
+	TrackFeatureFlags            = "config_feature_flags"
 	TrackPermissionsGeneral      = "permissions_general"
 	TrackPermissionsSystemScheme = "permissions_system_scheme"
 	TrackPermissionsTeamSchemes  = "permissions_team_schemes"
@@ -780,6 +781,7 @@ func (ts *TelemetryService) trackConfig() {
 		"message_retention_days":  *cfg.DataRetentionSettings.MessageRetentionDays,
 		"file_retention_days":     *cfg.DataRetentionSettings.FileRetentionDays,
 		"deletion_job_start_time": *cfg.DataRetentionSettings.DeletionJobStartTime,
+		"batch_size":              *cfg.DataRetentionSettings.BatchSize,
 	})
 
 	ts.sendTelemetry(TrackConfigMessageExport, map[string]interface{}{
@@ -825,6 +827,14 @@ func (ts *TelemetryService) trackConfig() {
 	ts.sendTelemetry(TrackConfigExport, map[string]interface{}{
 		"retention_days": *cfg.ExportSettings.RetentionDays,
 	})
+
+	// Convert feature flags to map[string]interface{} for sending
+	flags := cfg.FeatureFlags.ToMap()
+	interfaceFlags := make(map[string]interface{})
+	for k, v := range flags {
+		interfaceFlags[k] = v
+	}
+	ts.sendTelemetry(TrackFeatureFlags, interfaceFlags)
 }
 
 func (ts *TelemetryService) trackLicense() {
@@ -1301,6 +1311,7 @@ func (ts *TelemetryService) trackPluginConfig(cfg *model.Config, marketplaceURL 
 		"automatic_prepackaged_plugins": *cfg.PluginSettings.AutomaticPrepackagedPlugins,
 		"is_default_marketplace_url":    isDefault(*cfg.PluginSettings.MarketplaceUrl, model.PLUGIN_SETTINGS_DEFAULT_MARKETPLACE_URL),
 		"signature_public_key_files":    len(cfg.PluginSettings.SignaturePublicKeyFiles),
+		"chimera_oauth_proxy_url":       *cfg.PluginSettings.ChimeraOAuthProxyUrl,
 	}
 
 	// knownPluginIDs lists all known plugin IDs in the Marketplace

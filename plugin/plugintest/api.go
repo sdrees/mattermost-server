@@ -168,6 +168,31 @@ func (_m *API) CreateChannel(channel *model.Channel) (*model.Channel, *model.App
 	return r0, r1
 }
 
+// CreateChannelSidebarCategory provides a mock function with given fields: userID, teamID, newCategory
+func (_m *API) CreateChannelSidebarCategory(userID string, teamID string, newCategory *model.SidebarCategoryWithChannels) (*model.SidebarCategoryWithChannels, *model.AppError) {
+	ret := _m.Called(userID, teamID, newCategory)
+
+	var r0 *model.SidebarCategoryWithChannels
+	if rf, ok := ret.Get(0).(func(string, string, *model.SidebarCategoryWithChannels) *model.SidebarCategoryWithChannels); ok {
+		r0 = rf(userID, teamID, newCategory)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.SidebarCategoryWithChannels)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(string, string, *model.SidebarCategoryWithChannels) *model.AppError); ok {
+		r1 = rf(userID, teamID, newCategory)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
+}
+
 // CreateCommand provides a mock function with given fields: cmd
 func (_m *API) CreateCommand(cmd *model.Command) (*model.Command, error) {
 	ret := _m.Called(cmd)
@@ -186,6 +211,31 @@ func (_m *API) CreateCommand(cmd *model.Command) (*model.Command, error) {
 		r1 = rf(cmd)
 	} else {
 		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// CreateOAuthApp provides a mock function with given fields: app
+func (_m *API) CreateOAuthApp(app *model.OAuthApp) (*model.OAuthApp, *model.AppError) {
+	ret := _m.Called(app)
+
+	var r0 *model.OAuthApp
+	if rf, ok := ret.Get(0).(func(*model.OAuthApp) *model.OAuthApp); ok {
+		r0 = rf(app)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.OAuthApp)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(*model.OAuthApp) *model.AppError); ok {
+		r1 = rf(app)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
 	}
 
 	return r0, r1
@@ -341,6 +391,31 @@ func (_m *API) CreateUser(user *model.User) (*model.User, *model.AppError) {
 	return r0, r1
 }
 
+// CreateUserAccessToken provides a mock function with given fields: token
+func (_m *API) CreateUserAccessToken(token *model.UserAccessToken) (*model.UserAccessToken, *model.AppError) {
+	ret := _m.Called(token)
+
+	var r0 *model.UserAccessToken
+	if rf, ok := ret.Get(0).(func(*model.UserAccessToken) *model.UserAccessToken); ok {
+		r0 = rf(token)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.UserAccessToken)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(*model.UserAccessToken) *model.AppError); ok {
+		r1 = rf(token)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
+}
+
 // DeleteBotIconImage provides a mock function with given fields: botUserId
 func (_m *API) DeleteBotIconImage(botUserId string) *model.AppError {
 	ret := _m.Called(botUserId)
@@ -406,6 +481,22 @@ func (_m *API) DeleteCommand(commandID string) error {
 // DeleteEphemeralPost provides a mock function with given fields: userID, postId
 func (_m *API) DeleteEphemeralPost(userID string, postId string) {
 	_m.Called(userID, postId)
+}
+
+// DeleteOAuthApp provides a mock function with given fields: appID
+func (_m *API) DeleteOAuthApp(appID string) *model.AppError {
+	ret := _m.Called(appID)
+
+	var r0 *model.AppError
+	if rf, ok := ret.Get(0).(func(string) *model.AppError); ok {
+		r0 = rf(appID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.AppError)
+		}
+	}
+
+	return r0
 }
 
 // DeletePost provides a mock function with given fields: postId
@@ -805,6 +896,31 @@ func (_m *API) GetChannelMembersForUser(teamID string, userID string, page int, 
 	var r1 *model.AppError
 	if rf, ok := ret.Get(1).(func(string, string, int, int) *model.AppError); ok {
 		r1 = rf(teamID, userID, page, perPage)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
+}
+
+// GetChannelSidebarCategories provides a mock function with given fields: userID, teamID
+func (_m *API) GetChannelSidebarCategories(userID string, teamID string) (*model.OrderedSidebarCategories, *model.AppError) {
+	ret := _m.Called(userID, teamID)
+
+	var r0 *model.OrderedSidebarCategories
+	if rf, ok := ret.Get(0).(func(string, string) *model.OrderedSidebarCategories); ok {
+		r0 = rf(userID, teamID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.OrderedSidebarCategories)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(string, string) *model.AppError); ok {
+		r1 = rf(userID, teamID)
 	} else {
 		if ret.Get(1) != nil {
 			r1 = ret.Get(1).(*model.AppError)
@@ -1336,6 +1452,31 @@ func (_m *API) GetLicense() *model.License {
 	}
 
 	return r0
+}
+
+// GetOAuthApp provides a mock function with given fields: appID
+func (_m *API) GetOAuthApp(appID string) (*model.OAuthApp, *model.AppError) {
+	ret := _m.Called(appID)
+
+	var r0 *model.OAuthApp
+	if rf, ok := ret.Get(0).(func(string) *model.OAuthApp); ok {
+		r0 = rf(appID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.OAuthApp)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(string) *model.AppError); ok {
+		r1 = rf(appID)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
 }
 
 // GetPluginConfig provides a mock function with given fields:
@@ -2682,6 +2823,20 @@ func (_m *API) PluginHTTP(request *http.Request) *http.Response {
 	return r0
 }
 
+// PublishPluginClusterEvent provides a mock function with given fields: ev, opts
+func (_m *API) PublishPluginClusterEvent(ev model.PluginClusterEvent, opts model.PluginClusterEventSendOptions) error {
+	ret := _m.Called(ev, opts)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(model.PluginClusterEvent, model.PluginClusterEventSendOptions) error); ok {
+		r0 = rf(ev, opts)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // PublishUserTyping provides a mock function with given fields: userID, channelId, parentId
 func (_m *API) PublishUserTyping(userID string, channelId string, parentId string) *model.AppError {
 	ret := _m.Called(userID, channelId, parentId)
@@ -2781,6 +2936,38 @@ func (_m *API) RemoveTeamIcon(teamID string) *model.AppError {
 	var r0 *model.AppError
 	if rf, ok := ret.Get(0).(func(string) *model.AppError); ok {
 		r0 = rf(teamID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.AppError)
+		}
+	}
+
+	return r0
+}
+
+// RequestTrialLicense provides a mock function with given fields: requesterID, users, termsAccepted, receiveEmailsAccepted
+func (_m *API) RequestTrialLicense(requesterID string, users int, termsAccepted bool, receiveEmailsAccepted bool) *model.AppError {
+	ret := _m.Called(requesterID, users, termsAccepted, receiveEmailsAccepted)
+
+	var r0 *model.AppError
+	if rf, ok := ret.Get(0).(func(string, int, bool, bool) *model.AppError); ok {
+		r0 = rf(requesterID, users, termsAccepted, receiveEmailsAccepted)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.AppError)
+		}
+	}
+
+	return r0
+}
+
+// RevokeUserAccessToken provides a mock function with given fields: tokenID
+func (_m *API) RevokeUserAccessToken(tokenID string) *model.AppError {
+	ret := _m.Called(tokenID)
+
+	var r0 *model.AppError
+	if rf, ok := ret.Get(0).(func(string) *model.AppError); ok {
+		r0 = rf(tokenID)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*model.AppError)
@@ -3027,6 +3214,31 @@ func (_m *API) SetTeamIcon(teamID string, data []byte) *model.AppError {
 	return r0
 }
 
+// SetUserStatusTimedDND provides a mock function with given fields: userId, endtime
+func (_m *API) SetUserStatusTimedDND(userId string, endtime int64) (*model.Status, *model.AppError) {
+	ret := _m.Called(userId, endtime)
+
+	var r0 *model.Status
+	if rf, ok := ret.Get(0).(func(string, int64) *model.Status); ok {
+		r0 = rf(userId, endtime)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.Status)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(string, int64) *model.AppError); ok {
+		r1 = rf(userId, endtime)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
+}
+
 // UnregisterCommand provides a mock function with given fields: teamID, trigger
 func (_m *API) UnregisterCommand(teamID string, trigger string) error {
 	ret := _m.Called(teamID, trigger)
@@ -3141,6 +3353,31 @@ func (_m *API) UpdateChannelMemberRoles(channelId string, userID string, newRole
 	return r0, r1
 }
 
+// UpdateChannelSidebarCategories provides a mock function with given fields: userID, teamID, categories
+func (_m *API) UpdateChannelSidebarCategories(userID string, teamID string, categories []*model.SidebarCategoryWithChannels) ([]*model.SidebarCategoryWithChannels, *model.AppError) {
+	ret := _m.Called(userID, teamID, categories)
+
+	var r0 []*model.SidebarCategoryWithChannels
+	if rf, ok := ret.Get(0).(func(string, string, []*model.SidebarCategoryWithChannels) []*model.SidebarCategoryWithChannels); ok {
+		r0 = rf(userID, teamID, categories)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*model.SidebarCategoryWithChannels)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(string, string, []*model.SidebarCategoryWithChannels) *model.AppError); ok {
+		r1 = rf(userID, teamID, categories)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
+}
+
 // UpdateCommand provides a mock function with given fields: commandID, updatedCmd
 func (_m *API) UpdateCommand(commandID string, updatedCmd *model.Command) (*model.Command, error) {
 	ret := _m.Called(commandID, updatedCmd)
@@ -3178,6 +3415,31 @@ func (_m *API) UpdateEphemeralPost(userID string, post *model.Post) *model.Post 
 	}
 
 	return r0
+}
+
+// UpdateOAuthApp provides a mock function with given fields: app
+func (_m *API) UpdateOAuthApp(app *model.OAuthApp) (*model.OAuthApp, *model.AppError) {
+	ret := _m.Called(app)
+
+	var r0 *model.OAuthApp
+	if rf, ok := ret.Get(0).(func(*model.OAuthApp) *model.OAuthApp); ok {
+		r0 = rf(app)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.OAuthApp)
+		}
+	}
+
+	var r1 *model.AppError
+	if rf, ok := ret.Get(1).(func(*model.OAuthApp) *model.AppError); ok {
+		r1 = rf(app)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*model.AppError)
+		}
+	}
+
+	return r0, r1
 }
 
 // UpdatePost provides a mock function with given fields: post

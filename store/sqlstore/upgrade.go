@@ -19,7 +19,10 @@ import (
 )
 
 const (
-	CurrentSchemaVersion   = Version5350
+	CurrentSchemaVersion   = Version5370
+	Version5380            = "5.38.0"
+	Version5370            = "5.37.0"
+	Version5360            = "5.36.0"
 	Version5350            = "5.35.0"
 	Version5340            = "5.34.0"
 	Version5330            = "5.33.0"
@@ -206,6 +209,9 @@ func upgradeDatabase(sqlStore *SqlStore, currentModelVersionString string) error
 	upgradeDatabaseToVersion533(sqlStore)
 	upgradeDatabaseToVersion534(sqlStore)
 	upgradeDatabaseToVersion535(sqlStore)
+	upgradeDatabaseToVersion536(sqlStore)
+	upgradeDatabaseToVersion537(sqlStore)
+	upgradeDatabaseToVersion538(sqlStore)
 
 	return nil
 }
@@ -221,9 +227,23 @@ func saveSchemaVersion(sqlStore *SqlStore, version string) {
 }
 
 func shouldPerformUpgrade(sqlStore *SqlStore, currentSchemaVersion string, expectedSchemaVersion string) bool {
-	if sqlStore.GetCurrentSchemaVersion() == currentSchemaVersion {
-		mlog.Warn("Attempting to upgrade the database schema version", mlog.String("current_version", currentSchemaVersion), mlog.String("new_version", expectedSchemaVersion))
+	storedSchemaVersion := sqlStore.GetCurrentSchemaVersion()
 
+	storedVersion, err := semver.Parse(storedSchemaVersion)
+	if err != nil {
+		mlog.Error("Error parsing stored schema version", mlog.Err(err))
+		return false
+	}
+
+	currentVersion, err := semver.Parse(currentSchemaVersion)
+	if err != nil {
+		mlog.Error("Error parsing current schema version", mlog.Err(err))
+		return false
+	}
+
+	if storedVersion.Major == currentVersion.Major && storedVersion.Minor == currentVersion.Minor {
+		mlog.Warn("Attempting to upgrade the database schema version",
+			mlog.String("stored_version", storedSchemaVersion), mlog.String("current_version", currentSchemaVersion), mlog.String("new_version", expectedSchemaVersion))
 		return true
 	}
 
@@ -646,9 +666,12 @@ func upgradeDatabaseToVersion58(sqlStore *SqlStore) {
 		sqlStore.AlterColumnTypeIfExists("OutgoingWebhooks", "Description", "text", "VARCHAR(500)")
 		sqlStore.AlterColumnTypeIfExists("IncomingWebhooks", "Description", "text", "VARCHAR(500)")
 		sqlStore.AlterColumnTypeIfExists("OutgoingWebhooks", "IconURL", "text", "VARCHAR(1024)")
-		sqlStore.AlterColumnDefaultIfExists("OutgoingWebhooks", "Username", model.NewString("NULL"), model.NewString(""))
-		sqlStore.AlterColumnDefaultIfExists("OutgoingWebhooks", "IconURL", nil, model.NewString(""))
-		sqlStore.AlterColumnDefaultIfExists("PluginKeyValueStore", "ExpireAt", model.NewString("NULL"), model.NewString("NULL"))
+		sqlStore.RemoveDefaultIfColumnExists("OutgoingWebhooks", "Username")
+		if sqlStore.DriverName() == model.DATABASE_DRIVER_POSTGRES {
+			sqlStore.RemoveDefaultIfColumnExists("OutgoingWebhooks", "IconURL")
+		}
+		sqlStore.AlterDefaultIfColumnExists("OutgoingWebhooks", "Username", model.NewString("NULL"), nil)
+		sqlStore.AlterDefaultIfColumnExists("PluginKeyValueStore", "ExpireAt", model.NewString("NULL"), model.NewString("NULL"))
 
 		saveSchemaVersion(sqlStore, Version580)
 	}
@@ -922,9 +945,9 @@ func precheckMigrationToVersion528(sqlStore *SqlStore) error {
 func upgradeDatabaseToVersion529(sqlStore *SqlStore) {
 	if shouldPerformUpgrade(sqlStore, Version5281, Version5290) {
 		sqlStore.AlterColumnTypeIfExists("SidebarCategories", "Id", "VARCHAR(128)", "VARCHAR(128)")
-		sqlStore.AlterColumnDefaultIfExists("SidebarCategories", "Id", model.NewString(""), nil)
+		sqlStore.RemoveDefaultIfColumnExists("SidebarCategories", "Id")
 		sqlStore.AlterColumnTypeIfExists("SidebarChannels", "CategoryId", "VARCHAR(128)", "VARCHAR(128)")
-		sqlStore.AlterColumnDefaultIfExists("SidebarChannels", "CategoryId", model.NewString(""), nil)
+		sqlStore.RemoveDefaultIfColumnExists("SidebarChannels", "CategoryId")
 
 		sqlStore.CreateColumnIfNotExistsNoDefault("Threads", "ChannelId", "VARCHAR(26)", "VARCHAR(26)")
 
@@ -951,6 +974,7 @@ func upgradeDatabaseToVersion530(sqlStore *SqlStore) {
 		sqlStore.CreateColumnIfNotExistsNoDefault("FileInfo", "Content", "longtext", "text")
 
 		sqlStore.CreateColumnIfNotExists("SidebarCategories", "Muted", "tinyint(1)", "boolean", "0")
+
 		saveSchemaVersion(sqlStore, Version5300)
 	}
 }
@@ -1053,11 +1077,20 @@ func upgradeDatabaseToVersion535(sqlStore *SqlStore) {
 			uniquenessColumns = []string{"RemoteTeamId", "SiteUrl(168)"}
 		}
 		sqlStore.CreateUniqueCompositeIndexIfNotExists(RemoteClusterSiteURLUniqueIndex, "RemoteClusters", uniquenessColumns)
-		sqlStore.CreateColumnIfNotExists("SharedChannelUsers", "ChannelId", "VARCHAR(26)", "VARCHAR(26)", "")
 
 		rootCountMigration(sqlStore)
 
 		saveSchemaVersion(sqlStore, Version5350)
+	}
+}
+
+func upgradeDatabaseToVersion536(sqlStore *SqlStore) {
+	if shouldPerformUpgrade(sqlStore, Version5350, Version5360) {
+		sqlStore.CreateColumnIfNotExists("SharedChannelUsers", "ChannelId", "VARCHAR(26)", "VARCHAR(26)", "")
+		sqlStore.CreateColumnIfNotExists("SharedChannelRemotes", "LastPostUpdateAt", "bigint", "bigint", "0")
+		sqlStore.CreateColumnIfNotExists("SharedChannelRemotes", "LastPostId", "VARCHAR(26)", "VARCHAR(26)", "")
+
+		saveSchemaVersion(sqlStore, Version5360)
 	}
 }
 
@@ -1066,7 +1099,7 @@ func rootCountMigration(sqlStore *SqlStore) {
 	msgCountRootExists := sqlStore.DoesColumnExist("ChannelMembers", "MsgCountRoot")
 
 	sqlStore.CreateColumnIfNotExists("ChannelMembers", "MentionCountRoot", "bigint", "bigint", "0")
-	sqlStore.AlterColumnDefaultIfExists("ChannelMembers", "MentionCountRoot", model.NewString("0"), model.NewString("0"))
+	sqlStore.AlterDefaultIfColumnExists("ChannelMembers", "MentionCountRoot", model.NewString("0"), model.NewString("0"))
 
 	mentionCountRootCTE := `
 		SELECT ChannelId, COALESCE(SUM(UnreadMentions), 0) AS UnreadMentions, UserId
@@ -1101,11 +1134,11 @@ func rootCountMigration(sqlStore *SqlStore) {
 	defer sqlStore.RemoveColumnIfExists("Channels", "LastRootPostAt")
 
 	sqlStore.CreateColumnIfNotExists("ChannelMembers", "MsgCountRoot", "bigint", "bigint", "0")
-	sqlStore.AlterColumnDefaultIfExists("ChannelMembers", "MsgCountRoot", model.NewString("0"), model.NewString("0"))
+	sqlStore.AlterDefaultIfColumnExists("ChannelMembers", "MsgCountRoot", model.NewString("0"), model.NewString("0"))
 
 	forceIndex := ""
 	if sqlStore.DriverName() == model.DATABASE_DRIVER_MYSQL {
-		forceIndex = "FORCE INDEX(idx_posts_channel_id)"
+		forceIndex = "FORCE INDEX(idx_posts_channel_id_update_at)"
 	}
 	totalMsgCountRootCTE := `
 		SELECT Channels.Id channelid, COALESCE(COUNT(*),0) newcount, COALESCE(MAX(Posts.CreateAt), 0) as lastpost
@@ -1149,5 +1182,100 @@ func rootCountMigration(sqlStore *SqlStore) {
 		if _, err := sqlStore.GetMaster().ExecNoTimeout(updateChannelMembers); err != nil {
 			mlog.Error("Error updating ChannelMembers table", mlog.Err(err))
 		}
+	}
+}
+
+func upgradeDatabaseToVersion537(sqlStore *SqlStore) {
+	if shouldPerformUpgrade(sqlStore, Version5360, Version5370) {
+		sqlStore.RemoveIndexIfExists("idx_posts_channel_id", "Posts")
+		sqlStore.RemoveIndexIfExists("idx_channels_name", "Channels")
+		sqlStore.RemoveIndexIfExists("idx_publicchannels_name", "PublicChannels")
+		sqlStore.RemoveIndexIfExists("idx_channelmembers_channel_id", "ChannelMembers")
+		sqlStore.RemoveIndexIfExists("idx_emoji_name", "Emoji")
+		sqlStore.RemoveIndexIfExists("idx_oauthaccessdata_client_id", "OAuthAccessData")
+		sqlStore.RemoveIndexIfExists("idx_oauthauthdata_client_id", "OAuthAuthData")
+		sqlStore.RemoveIndexIfExists("idx_preferences_user_id", "Preferences")
+		sqlStore.RemoveIndexIfExists("idx_notice_views_user_id", "ProductNoticeViewState")
+		sqlStore.RemoveIndexIfExists("idx_notice_views_user_notice", "ProductNoticeViewState")
+		sqlStore.RemoveIndexIfExists("idx_status_user_id", "Status")
+		sqlStore.RemoveIndexIfExists("idx_teammembers_team_id", "TeamMembers")
+		sqlStore.RemoveIndexIfExists("idx_teams_name", "Teams")
+		sqlStore.RemoveIndexIfExists("idx_user_access_tokens_token", "UserAccessTokens")
+		sqlStore.RemoveIndexIfExists("idx_user_terms_of_service_user_id", "UserTermsOfService")
+		sqlStore.RemoveIndexIfExists("idx_users_email", "Users")
+		sqlStore.RemoveIndexIfExists("idx_sharedchannelusers_user_id", "SharedChannelUsers")
+		sqlStore.RemoveIndexIfExists("IDX_RetentionPolicies_DisplayName_Id", "RetentionPolicies")
+		sqlStore.CreateIndexIfNotExists("IDX_RetentionPolicies_DisplayName", "RetentionPolicies", "DisplayName")
+
+		sqlStore.CreateColumnIfNotExistsNoDefault("Status", "DNDEndTime", "bigint", "bigint")
+		sqlStore.CreateColumnIfNotExistsNoDefault("Status", "PrevStatus", "VARCHAR(32)", "VARCHAR(32)")
+
+		saveSchemaVersion(sqlStore, Version5370)
+	}
+}
+
+func upgradeDatabaseToVersion538(sqlStore *SqlStore) {
+	// TODO: uncomment when the time arrive to upgrade the DB for 5.38
+	// if shouldPerformUpgrade(sqlStore, Version5370, Version5380) {
+	fixCRTChannelMembershipCounts(sqlStore)
+	fixCRTThreadCountsAndUnreads(sqlStore)
+
+	// 	saveSchemaVersion(sqlStore, Version5380)
+	// }
+}
+
+// fixCRTThreadCountsAndUnreads Marks threads as read for users where the last
+// reply time of the thread is earlier than the time the user viewed the channel.
+// Marking a thread means setting the mention count to zero and setting the
+// last viewed at time of the the thread as the last viewed at time
+// of the channel
+func fixCRTThreadCountsAndUnreads(sqlStore *SqlStore) {
+	threadMembershipsCTE := `
+		SELECT PostId, UserId, ChannelMembers.LastViewedAt as CM_LastViewedAt, Threads.LastReplyAt
+		FROM Threads
+		INNER JOIN ChannelMembers on ChannelMembers.ChannelId = Threads.ChannelId
+		WHERE Threads.LastReplyAt <= ChannelMembers.LastViewedAt
+	`
+	updateThreadMembershipQuery := `
+		WITH q as (` + threadMembershipsCTE + `)
+		UPDATE ThreadMemberships set LastViewed = q.CM_LastViewedAt, UnreadMentions = 0, LastUpdated = :Now
+		FROM q WHERE ThreadMemberships.Postid = q.PostId AND ThreadMemberships.UserId = q.UserId
+	`
+	if sqlStore.DriverName() == model.DATABASE_DRIVER_MYSQL {
+		updateThreadMembershipQuery = `
+			UPDATE ThreadMemberships
+			INNER JOIN (` + threadMembershipsCTE + `) as q
+			ON ThreadMemberships.Postid = q.PostId AND ThreadMemberships.UserId = q.UserId
+			SET LastViewed = q.CM_LastViewedAt, UnreadMentions = 0, LastUpdated = :Now
+		`
+	}
+
+	if _, err := sqlStore.GetMaster().ExecNoTimeout(updateThreadMembershipQuery, map[string]interface{}{"Now": model.GetMillis()}); err != nil {
+		mlog.Error("Error updating lastviewedat and unreadmentions of threadmemberships", mlog.Err(err))
+	}
+}
+
+// fixCRTChannelMembershipCounts fixes the channel counts, i.e. the total message count,
+// total root message count, mention count, and mention count in root messages for users
+// who have viewed the channel after the last post in the channel
+func fixCRTChannelMembershipCounts(sqlStore *SqlStore) {
+	channelMembershipsCountsAndMentions := `
+		UPDATE ChannelMembers
+		SET MentionCount=0, MentionCountRoot=0, MsgCount=Channels.TotalMsgCount, MsgCountRoot=Channels.TotalMsgCountRoot, LastUpdateAt = :Now
+		FROM Channels
+		WHERE ChannelMembers.Channelid = Channels.Id AND ChannelMembers.LastViewedAt >= Channels.LastPostAt;
+	`
+
+	if sqlStore.DriverName() == model.DATABASE_DRIVER_MYSQL {
+		channelMembershipsCountsAndMentions = `
+			UPDATE ChannelMembers
+			INNER JOIN Channels on Channels.Id = ChannelMembers.ChannelId
+			SET MentionCount=0, MentionCountRoot=0, MsgCount=Channels.TotalMsgCount, MsgCountRoot=Channels.TotalMsgCountRoot, LastUpdateAt = :Now
+			WHERE ChannelMembers.LastViewedAt >= Channels.LastPostAt;
+		`
+	}
+
+	if _, err := sqlStore.GetMaster().ExecNoTimeout(channelMembershipsCountsAndMentions, map[string]interface{}{"Now": model.GetMillis()}); err != nil {
+		mlog.Error("Error updating counts and unreads for channelmemberships", mlog.Err(err))
 	}
 }

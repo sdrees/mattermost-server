@@ -421,7 +421,6 @@ func newSqlChannelStore(sqlStore *SqlStore, metrics einterfaces.MetricsInterface
 
 func (s SqlChannelStore) createIndexesIfNotExists() {
 	s.CreateIndexIfNotExists("idx_channels_team_id", "Channels", "TeamId")
-	s.CreateIndexIfNotExists("idx_channels_name", "Channels", "Name")
 	s.CreateIndexIfNotExists("idx_channels_update_at", "Channels", "UpdateAt")
 	s.CreateIndexIfNotExists("idx_channels_create_at", "Channels", "CreateAt")
 	s.CreateIndexIfNotExists("idx_channels_delete_at", "Channels", "DeleteAt")
@@ -431,13 +430,11 @@ func (s SqlChannelStore) createIndexesIfNotExists() {
 		s.CreateIndexIfNotExists("idx_channels_displayname_lower", "Channels", "lower(DisplayName)")
 	}
 
-	s.CreateIndexIfNotExists("idx_channelmembers_channel_id", "ChannelMembers", "ChannelId")
 	s.CreateIndexIfNotExists("idx_channelmembers_user_id", "ChannelMembers", "UserId")
 
 	s.CreateFullTextIndexIfNotExists("idx_channel_search_txt", "Channels", "Name, DisplayName, Purpose")
 
 	s.CreateIndexIfNotExists("idx_publicchannels_team_id", "PublicChannels", "TeamId")
-	s.CreateIndexIfNotExists("idx_publicchannels_name", "PublicChannels", "Name")
 	s.CreateIndexIfNotExists("idx_publicchannels_delete_at", "PublicChannels", "DeleteAt")
 	if s.DriverName() == model.DATABASE_DRIVER_POSTGRES {
 		s.CreateIndexIfNotExists("idx_publicchannels_name_lower", "PublicChannels", "lower(Name)")
@@ -488,11 +485,18 @@ func (s SqlChannelStore) upsertPublicChannelT(transaction *gorp.Transaction, cha
 		return nil
 	}
 
+	vals := map[string]interface{}{
+		"Id":          publicChannel.Id,
+		"DeleteAt":    publicChannel.DeleteAt,
+		"TeamId":      publicChannel.TeamId,
+		"DisplayName": publicChannel.DisplayName,
+		"Name":        publicChannel.Name,
+		"Header":      publicChannel.Header,
+		"Purpose":     publicChannel.Purpose,
+	}
+	var err error
 	if s.DriverName() == model.DATABASE_DRIVER_MYSQL {
-		// Leverage native upsert for MySQL, since RowsAffected returns 0 if the row exists
-		// but no changes were made, breaking the update-then-insert paradigm below when
-		// the row already exists. (Postgres 9.4 doesn't support native upsert.)
-		if _, err := transaction.Exec(`
+		_, err = transaction.Exec(`
 			INSERT INTO
 			    PublicChannels(Id, DeleteAt, TeamId, DisplayName, Name, Header, Purpose)
 			VALUES
@@ -504,29 +508,24 @@ func (s SqlChannelStore) upsertPublicChannelT(transaction *gorp.Transaction, cha
 			    Name = :Name,
 			    Header = :Header,
 			    Purpose = :Purpose;
-		`, map[string]interface{}{
-			"Id":          publicChannel.Id,
-			"DeleteAt":    publicChannel.DeleteAt,
-			"TeamId":      publicChannel.TeamId,
-			"DisplayName": publicChannel.DisplayName,
-			"Name":        publicChannel.Name,
-			"Header":      publicChannel.Header,
-			"Purpose":     publicChannel.Purpose,
-		}); err != nil {
-			return errors.Wrap(err, "failed to insert public channel")
-		}
+		`, vals)
 	} else {
-		count, err := transaction.Update(publicChannel)
-		if err != nil {
-			return errors.Wrap(err, "failed to update public channel")
-		}
-		if count > 0 {
-			return nil
-		}
-
-		if err := transaction.Insert(publicChannel); err != nil {
-			return errors.Wrap(err, "failed to insert public channel")
-		}
+		_, err = transaction.Exec(`
+			INSERT INTO
+			    PublicChannels(Id, DeleteAt, TeamId, DisplayName, Name, Header, Purpose)
+			VALUES
+			    (:Id, :DeleteAt, :TeamId, :DisplayName, :Name, :Header, :Purpose)
+			ON CONFLICT (id) DO UPDATE
+			SET DeleteAt = :DeleteAt,
+			    TeamId = :TeamId,
+			    DisplayName = :DisplayName,
+			    Name = :Name,
+			    Header = :Header,
+			    Purpose = :Purpose;
+		`, vals)
+	}
+	if err != nil {
+		return errors.Wrap(err, "failed to insert public channel")
 	}
 
 	return nil
@@ -2216,7 +2215,7 @@ func (s SqlChannelStore) CountPostsAfter(channelId string, timestamp int64, user
 // UpdateLastViewedAtPost updates a ChannelMember as if the user last read the channel at the time of the given post.
 // If the provided mentionCount is -1, the given post and all posts after it are considered to be mentions. Returns
 // an updated model.ChannelUnreadAt that can be returned to the client.
-func (s SqlChannelStore) UpdateLastViewedAtPost(unreadPost *model.Post, userID string, mentionCount, mentionCountRoot int, updateThreads bool) (*model.ChannelUnreadAt, error) {
+func (s SqlChannelStore) UpdateLastViewedAtPost(unreadPost *model.Post, userID string, mentionCount, mentionCountRoot int, updateThreads bool, setUnreadCountRoot bool) (*model.ChannelUnreadAt, error) {
 	var threadsToUpdate []string
 	unreadDate := unreadPost.CreateAt - 1
 	if updateThreads {
@@ -2230,6 +2229,10 @@ func (s SqlChannelStore) UpdateLastViewedAtPost(unreadPost *model.Post, userID s
 	unread, unreadRoot, err := s.CountPostsAfter(unreadPost.ChannelId, unreadDate, "")
 	if err != nil {
 		return nil, err
+	}
+
+	if !setUnreadCountRoot {
+		unreadRoot = 0
 	}
 
 	params := map[string]interface{}{
@@ -2289,7 +2292,7 @@ func (s SqlChannelStore) UpdateLastViewedAtPost(unreadPost *model.Post, userID s
 	}
 
 	if updateThreads {
-		s.Thread().UpdateUnreadsByChannel(userID, threadsToUpdate, unreadDate, true)
+		s.Thread().UpdateUnreadsByChannel(userID, threadsToUpdate, unreadDate, false)
 	}
 	return result, nil
 }
